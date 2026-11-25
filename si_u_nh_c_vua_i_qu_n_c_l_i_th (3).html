@@ -1,0 +1,1833 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Siêu Nhí Cờ Vua - Đổi Quân Có Lợi Thế</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --board-size: min(62vh, 440px);
+        }
+        body.nav-collapsed {
+            --board-size: min(70vh, 490px);
+        }
+        body {
+            font-family: 'Nunito', sans-serif;
+            background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 50%, #ffedd5 100%);
+            user-select: none;
+            overflow: hidden;
+        }
+        h1, h2, h3, .font-fun {
+            font-family: 'Fredoka', sans-serif;
+        }
+        .chess-board-grid {
+            width: var(--board-size);
+            height: var(--board-size);
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            border: 5px solid #7c2d12;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(124, 45, 18, 0.25);
+            position: relative;
+            overflow: hidden;
+            transition: width 0.25s ease, height 0.25s ease;
+        }
+        .sq-light { background-color: #f8dcc0; }
+        .sq-dark { background-color: #d48c55; }
+        .sq-selected {
+            background-color: #fde047 !important;
+            box-shadow: inset 0 0 0 3px #ca8a04;
+        }
+        .sq-last-move {
+            background-color: rgba(163, 230, 53, 0.55) !important;
+        }
+        .sq-hint::after {
+            content: '';
+            position: absolute;
+            width: 34%;
+            height: 34%;
+            background-color: rgba(22, 163, 74, 0.85);
+            border: 2px solid #14532d;
+            border-radius: 50%;
+            pointer-events: none;
+            animation: pulseDot 1.3s infinite;
+        }
+        .sq-capture-hint {
+            box-shadow: inset 0 0 0 3px #dc2626;
+            background-color: rgba(254, 202, 202, 0.72) !important;
+        }
+        @keyframes pulseDot {
+            0%, 100% { transform: scale(0.9); }
+            50% { transform: scale(1.15); }
+        }
+        .piece-svg-wrap {
+            width: 86%;
+            height: 86%;
+            transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1);
+            filter: drop-shadow(0 2px 2px rgba(0,0,0,0.22));
+        }
+        .piece-svg-wrap:hover {
+            transform: scale(1.12);
+        }
+        .bounce-in {
+            animation: bounceIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes bounceIn {
+            0% { transform: scale(0.8); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .shake {
+            animation: shake 0.4s ease-in-out;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-6px); }
+            50% { transform: translateX(6px); }
+            75% { transform: translateX(-6px); }
+        }
+        .balance-beam {
+            transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+            transform-origin: center center;
+        }
+        .btn-3d {
+            transition: all 0.12s ease;
+            box-shadow: 0 3px 0 rgba(0,0,0,0.2);
+        }
+        .btn-3d:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 0 rgba(0,0,0,0.2);
+        }
+        .mystery-tile.locked svg {
+            filter: grayscale(100%) brightness(62%) contrast(85%);
+        }
+        .mystery-tile.unlocked {
+            animation: tileUnlockPop 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        @keyframes tileUnlockPop {
+            0% { transform: scale(0.55) rotateY(90deg); filter: brightness(1.8); }
+            60% { transform: scale(1.08) rotateY(0deg); filter: brightness(1.2); }
+            100% { transform: scale(1) rotateY(0deg); filter: brightness(1); }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden text-slate-800">
+    <div id="root" class="h-full flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // =========================================================
+        // 1. HỆ THỐNG ÂM THANH WEB AUDIO API (TỔNG HỢP TRỰC TIẾP)
+        // =========================================================
+        const SoundFX = {
+            enabled: true,
+            ctx: null,
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContext) this.ctx = new AudioContext();
+                }
+                if (this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            },
+            tone(freq, type = 'sine', duration = 0.14, delay = 0, vol = 0.18) {
+                if (!this.enabled) return;
+                try {
+                    this.init();
+                    if (!this.ctx) return;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime + delay);
+                    gain.gain.setValueAtTime(vol, this.ctx.currentTime + delay);
+                    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + delay + duration);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(this.ctx.currentTime + delay);
+                    osc.stop(this.ctx.currentTime + delay + duration);
+                } catch (e) {}
+            },
+            click() { this.tone(600, 'triangle', 0.07, 0, 0.14); },
+            move() { this.tone(380, 'sine', 0.09, 0, 0.18); },
+            capture() {
+                this.tone(310, 'square', 0.08, 0, 0.16);
+                this.tone(490, 'square', 0.12, 0.06, 0.18);
+            },
+            unlock() {
+                this.tone(523.25, 'sine', 0.14, 0, 0.2);
+                this.tone(659.25, 'sine', 0.14, 0.08, 0.2);
+                this.tone(783.99, 'sine', 0.16, 0.16, 0.2);
+                this.tone(1046.50, 'triangle', 0.3, 0.24, 0.22);
+            },
+            victory() {
+                const notes = [523.25, 659.25, 783.99, 1046.50, 783.99, 1046.50];
+                const times = [0, 0.11, 0.22, 0.33, 0.5, 0.64];
+                notes.forEach((n, i) => this.tone(n, 'triangle', 0.28, times[i], 0.24));
+            },
+            error() {
+                this.tone(210, 'sawtooth', 0.15, 0, 0.14);
+                this.tone(175, 'sawtooth', 0.22, 0.13, 0.14);
+            },
+            tick() { this.tone(850, 'sine', 0.06, 0, 0.12); }
+        };
+
+        // =========================================================
+        // 2. COMPONENT QUÂN CỜ SVG VECTOR CHUẨN CBURNETT / STAUNTON
+        // =========================================================
+        const ChessPiece = ({ type, color, className = "w-full h-full" }) => {
+            const isWhite = color === 'w';
+            const fill = isWhite ? '#ffffff' : '#1f2937';
+            const stroke = '#111827';
+            const innerDetail = isWhite ? '#111827' : '#ffffff';
+
+            return (
+                <svg viewBox="0 0 45 45" className={className} style={{ display: 'block' }}>
+                    {type === 'P' && (
+                        <path
+                            d="M22.5 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38C17.33 16.5 16 18.59 16 21c0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z"
+                            fill={fill}
+                            stroke={stroke}
+                            strokeWidth="1.9"
+                            strokeLinecap="round"
+                        />
+                    )}
+
+                    {type === 'R' && (
+                        <g fill={fill} stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M9 39h27v-3H9v3zM12 36v-4h21v4H12zM11 14V9h4v2h5V9h5v2h5V9h4v5" />
+                            <path d="M34 14l-3 3H14l-3-3" />
+                            <path d="M31 17v12.5H14V17" />
+                            <path d="M31 29.5l1.5 2.5h-20l1.5-2.5" />
+                            <path d="M11 14h23" fill="none" stroke={innerDetail} strokeWidth="1.5" />
+                            {!isWhite && (
+                                <g fill="none" stroke="#ffffff" strokeWidth="1.4">
+                                    <path d="M12 35.5h21M13 31.5h19M14 29.5h17M14 17h17" />
+                                </g>
+                            )}
+                        </g>
+                    )}
+
+                    {type === 'N' && (
+                        <g fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path
+                                d="M 22,10 C 32.5,11 38.5,18 38,39 L 15,39 C 15,30 25,32.5 23,18"
+                                fill={fill}
+                            />
+                            <path
+                                d="M 24,18 C 24.38,20.91 18.45,25.37 16,27 C 13,29 13.18,31.34 11,31 C 9.958,30.06 12.41,27.96 11,28 C 10,28 11.19,29.23 10,30 C 9,30 5.997,31 6,26 C 6,24 12,14 12,14 C 12,14 13.89,12.1 14,10.5 C 13.27,9.506 13.5,8.5 13.5,7.5 C 14.5,6.5 16.5,10 16.5,10 L 18.5,10 C 18.5,10 19.28,8.008 21,7 C 22,7 22,10 22,10"
+                                fill={fill}
+                            />
+                            <circle cx="15" cy="14.5" r="1.2" fill={innerDetail} stroke={innerDetail} />
+                            <circle cx="9.5" cy="25.5" r="0.8" fill={innerDetail} stroke={innerDetail} />
+                            {!isWhite && (
+                                <path
+                                    d="M 24.55,10.4 L 24.1,11.85 L 24.6,12 C 27.75,13 30.25,14.49 32.5,18.75 C 34.75,23.01 35.75,29.06 35.25,39 L 35.2,39.5 L 37.45,39.5 L 37.5,39 C 38,28.94 36.62,22.15 34.25,17.66 C 31.88,13.17 28.46,11.02 25.06,10.5 L 24.55,10.4 z"
+                                    fill="#ffffff"
+                                    stroke="none"
+                                />
+                            )}
+                        </g>
+                    )}
+
+                    {type === 'B' && (
+                        <g fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <g fill={fill}>
+                                <path d="M9 36c3.39-.97 10.11.43 13.5-2 3.39 2.43 10.11 1.03 13.5 2 0 0 1.65.54 3 2-.68.97-1.65.99-3 .5-3.39-.97-10.11.46-13.5-1-3.39 1.46-10.11.03-13.5 1-1.354.49-2.323.47-3-.5 1.354-1.94 3-2 3-2z" />
+                                <path d="M15 32c2.5 2.5 12.5 2.5 15 0 .5-1.5 0-2 0-2 0-2.5-2.5-4-2.5-4 5.5-1.5 6-11.5-5-15.5-11 4-10.5 14-5 15.5 0 0-2.5 1.5-2.5 4 0 0-.5.5 0 2z" />
+                                <circle cx="22.5" cy="8" r="2.5" />
+                            </g>
+                            <path
+                                d="M17.5 26h10M15 30h15m-7.5-14.5v5M20 18h5"
+                                stroke={innerDetail}
+                                strokeWidth="1.7"
+                            />
+                        </g>
+                    )}
+
+                    {type === 'Q' && (
+                        <g fill={fill} stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="6" cy="12" r="2.2" />
+                            <circle cx="14" cy="9" r="2.2" />
+                            <circle cx="22.5" cy="8" r="2.2" />
+                            <circle cx="31" cy="9" r="2.2" />
+                            <circle cx="39" cy="12" r="2.2" />
+                            <path d="M9 26c8.5-1.5 21-1.5 27 0l2.5-12.5L31 25l-.3-14.1-5.2 13.6-3-14.5-3 14.5-5.2-13.6L14 25 6.5 13.5 9 26z" />
+                            <path d="M9 26c0 2 1.5 2 2.5 4 1 1.5 1 1 .5 3.5-1.5 1-1.5 2.5-1.5 2.5-1.5 1.5.5 2.5.5 2.5 6.5 1 16.5 1 23 0 0 0 1.5-1 0-2.5 0 0 .5-1.5-1-2.5-.5-2.5-.5-2 .5-3.5 1-2 2.5-2 2.5-4-8.5-1.5-18.5-1.5-27 0z" />
+                            <path
+                                d="M11.5 30c3.5-1 18.5-1 22 0M12 33.5c6-1 15-1 21 0"
+                                fill="none"
+                                stroke={innerDetail}
+                                strokeWidth="1.5"
+                            />
+                        </g>
+                    )}
+
+                    {type === 'K' && (
+                        <g fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22.5 11.63V6M20 8h5" />
+                            <path
+                                d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5"
+                                fill={fill}
+                            />
+                            <path
+                                d="M11.5 37c5.5 3.5 15.5 3.5 21 0v-7s9-4.5 6-10.5c-4-6.5-13.5-3.5-16 4V27v-3.5c-3.5-7.5-13-10.5-16-4-3 6 5 10 5 10V37z"
+                                fill={fill}
+                            />
+                            <path
+                                d="M11.5 30c5.5-3 15.5-3 21 0m-21 3.5c5.5-3 15.5-3 21 0m-21 3.5c5.5-3 15.5-3 21 0"
+                                stroke={innerDetail}
+                                strokeWidth="1.5"
+                            />
+                        </g>
+                    )}
+                </svg>
+            );
+        };
+
+        // =========================================================
+        // 3. DỮ LIỆU BÀI HỌC, 23 THẾ CỜ ĐỔI QUÂN & 2 BỨC TRANH BÍ ẨN
+        // =========================================================
+        const ARTWORKS = {
+            knightCup: {
+                name: '🐴 Kỵ Sĩ & Cúp Vàng Vô Địch',
+                renderSvgContent: () => (
+                    <g>
+                        <defs>
+                            <linearGradient id="skyA" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#38bdf8" />
+                                <stop offset="70%" stopColor="#bae6fd" />
+                                <stop offset="100%" stopColor="#fef9c3" />
+                            </linearGradient>
+                            <linearGradient id="goldA" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stopColor="#fde047" />
+                                <stop offset="50%" stopColor="#f59e0b" />
+                                <stop offset="100%" stopColor="#b45309" />
+                            </linearGradient>
+                        </defs>
+                        <rect width="300" height="200" fill="url(#skyA)" />
+                        <ellipse cx="60" cy="32" rx="34" ry="12" fill="#ffffff" opacity="0.9" />
+                        <ellipse cx="88" cy="29" rx="24" ry="10" fill="#ffffff" opacity="0.9" />
+                        <ellipse cx="150" cy="186" rx="195" ry="46" fill="#22c55e" />
+                        <ellipse cx="150" cy="194" rx="170" ry="36" fill="#16a34a" />
+                        {/* Kỵ Sĩ Mã Vàng bên trái */}
+                        <path d="M62,104 Q20,120 14,152 Q55,148 80,134 Z" fill="#ef4444" stroke="#991b1b" strokeWidth="3" />
+                        <path d="M55,168 L64,108 C60,86 70,60 98,52 L110,38 L118,52 C138,57 150,74 145,89 C140,97 124,98 115,94 L112,110 L128,168 Z" fill="#fbbf24" stroke="#78350f" strokeWidth="3.5" strokeLinejoin="round" />
+                        <path d="M74,62 C56,74 54,92 62,109 L74,103 C68,88 72,74 84,65 Z" fill="#f97316" stroke="#9a3412" strokeWidth="2" />
+                        <circle cx="116" cy="70" r="6" fill="#1e293b" />
+                        <circle cx="118" cy="68" r="2" fill="#ffffff" />
+                        <path d="M124,84 Q133,88 140,82" fill="none" stroke="#78350f" strokeWidth="2.8" strokeLinecap="round" />
+                        {/* Cúp Vàng Vô Địch bên phải */}
+                        <polygon points="182,52 194,32 208,45 218,28 228,45 242,32 254,52" fill="url(#goldA)" stroke="#78350f" strokeWidth="2.5" strokeLinejoin="round" />
+                        <path d="M174,69 C146,69 146,104 182,107" fill="none" stroke="#f59e0b" strokeWidth="8" strokeLinecap="round" />
+                        <path d="M262,69 C290,69 290,104 254,107" fill="none" stroke="#f59e0b" strokeWidth="8" strokeLinecap="round" />
+                        <path d="M170,60 L266,60 L252,109 C247,122 189,122 184,109 Z" fill="url(#goldA)" stroke="#78350f" strokeWidth="3.5" />
+                        <rect x="206" y="119" width="24" height="19" fill="#d97706" stroke="#78350f" strokeWidth="2.5" />
+                        <rect x="180" y="138" width="76" height="15" rx="5" fill="#78350f" />
+                        <rect x="188" y="141" width="60" height="9" rx="3" fill="#fde047" />
+                        <circle cx="218" cy="88" r="16" fill="#ffffff" stroke="#b45309" strokeWidth="2.5" />
+                        <text x="218" y="95" fontSize="22" textAnchor="middle" fill="#b45309">★</text>
+                        <text x="152" y="36" fontSize="18">✨</text>
+                        <text x="262" y="36" fontSize="18">⭐</text>
+                    </g>
+                )
+            },
+            crownCastle: {
+                name: '🏰 Lâu Đài Vương Miện Hoàng Gia',
+                renderSvgContent: () => (
+                    <g>
+                        <defs>
+                            <linearGradient id="skyB" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#818cf8" />
+                                <stop offset="60%" stopColor="#f472b6" />
+                                <stop offset="100%" stopColor="#fde68a" />
+                            </linearGradient>
+                        </defs>
+                        <rect width="300" height="200" fill="url(#skyB)" />
+                        <circle cx="245" cy="36" r="21" fill="#fde047" stroke="#f59e0b" strokeWidth="3" />
+                        <rect x="0" y="158" width="300" height="42" fill="#10b981" />
+                        {/* Lâu đài cổ tích */}
+                        <rect x="65" y="84" width="170" height="78" fill="#fef3c7" stroke="#92400e" strokeWidth="3.5" />
+                        <rect x="45" y="64" width="42" height="98" fill="#fde68a" stroke="#92400e" strokeWidth="3.5" />
+                        <polygon points="40,64 66,34 92,64" fill="#ef4444" stroke="#991b1b" strokeWidth="3" />
+                        <rect x="213" y="64" width="42" height="98" fill="#fde68a" stroke="#92400e" strokeWidth="3.5" />
+                        <polygon points="208,64 234,34 260,64" fill="#ef4444" stroke="#991b1b" strokeWidth="3" />
+                        <polygon points="115,84 150,47 185,84" fill="#3b82f6" stroke="#1e3a8a" strokeWidth="3" />
+                        {/* Cổng lâu đài */}
+                        <path d="M126,162 L126,127 A24,24 0 0,1 174,127 L174,162 Z" fill="#78350f" />
+                        <circle cx="150" cy="100" r="14" fill="#fbbf24" stroke="#92400e" strokeWidth="2.5" />
+                        <text x="150" y="106" fontSize="18" textAnchor="middle">👑</text>
+                        <text x="22" y="182" fontSize="18">🌷</text>
+                        <text x="255" y="182" fontSize="18">🌻</text>
+                        <text x="142" y="30" fontSize="20">✨</text>
+                    </g>
+                )
+            }
+        };
+
+        // 23 thế cờ đổi quân có lợi thế trích chuẩn từ phiếu bài tập lớp học (Bài 1 -> Bài 23)
+        // Không chứa tên gợi ý trong đề bài để học sinh tự suy nghĩ
+        const NEUTRAL_PROMPT = 'Quan sát kỹ bàn cờ, tính điểm các quân và thực hiện nước đổi quân có lợi thế nhất!';
+
+        const PUZZLES = [
+            {
+                id: 1, turn: 'b', profit: 6,
+                pieces: {
+                    '0,0': 'bR', '0,5': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,3': 'bQ', '1,5': 'bP', '1,6': 'bP',
+                    '2,2': 'bP', '2,5': 'bB', '2,7': 'bP',
+                    '3,2': 'bP', '3,5': 'wN',
+                    '4,2': 'wP', '4,3': 'bP', '4,4': 'wP', '4,5': 'wQ', '4,6': 'bB',
+                    '5,1': 'wN', '5,3': 'wP', '5,6': 'wP', '5,7': 'bN',
+                    '6,0': 'wP', '6,2': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,2': 'wB', '7,4': 'wR', '7,7': 'wK'
+                },
+                from: [5, 7], to: [4, 5],
+                math: 'Ăn Hậu (+9) - Mất Mã (-3) = LỜI +6 ĐIỂM!',
+                explanation: 'Mã Đen h3 (3đ) ăn Hậu Trắng f4 (9đ)! Dù Tốt Trắng g3 ăn lại Mã Đen, Đen vẫn lời tới +6 điểm.'
+            },
+            {
+                id: 2, turn: 'w', profit: 2,
+                pieces: {
+                    '0,0': 'bR', '0,2': 'bB', '0,3': 'bQ', '0,5': 'bR', '0,6': 'bK',
+                    '1,1': 'bP', '1,2': 'bP', '1,5': 'bN', '1,6': 'bB', '1,7': 'bP',
+                    '2,3': 'bP', '2,5': 'bP', '2,6': 'bP', '2,7': 'wP',
+                    '3,0': 'bP', '3,2': 'bN', '3,3': 'wP', '3,4': 'bP',
+                    '4,2': 'wP', '4,4': 'wP', '4,7': 'wN',
+                    '5,2': 'wN',
+                    '6,0': 'wP', '6,1': 'wP', '6,3': 'wB', '6,4': 'wB', '6,5': 'wP', '6,6': 'wP',
+                    '7,0': 'wR', '7,2': 'wQ', '7,4': 'wK', '7,7': 'wR'
+                },
+                from: [2, 7], to: [1, 6],
+                math: 'Ăn Tượng (+3) - Mất Tốt (-1) = LỜI +2 ĐIỂM!',
+                explanation: 'Tốt Trắng h6 (1đ) ăn Tượng Đen g7 (3đ)! Dù Vua Đen ăn lại Tốt, Trắng vẫn lời +2 điểm.'
+            },
+            {
+                id: 3, turn: 'w', profit: 9,
+                pieces: {
+                    '0,1': 'bR', '0,2': 'bR',
+                    '1,1': 'bP', '1,3': 'bB', '1,4': 'bK', '1,5': 'bB', '1,6': 'bP',
+                    '2,0': 'bP', '2,2': 'bN', '2,3': 'bP', '2,4': 'bP', '2,5': 'bN', '2,7': 'bP',
+                    '3,3': 'bP',
+                    '4,3': 'wP', '4,5': 'wB',
+                    '5,0': 'bQ', '5,3': 'wB', '5,4': 'wP', '5,5': 'wP',
+                    '6,0': 'wP', '6,1': 'wR', '6,2': 'wQ', '6,4': 'wN', '6,6': 'wP', '6,7': 'wP',
+                    '7,1': 'wN', '7,5': 'wR', '7,6': 'wK'
+                },
+                from: [7, 1], to: [5, 0],
+                math: 'Ăn Hậu (+9) - Mất 0 điểm = LỜI +9 ĐIỂM!',
+                explanation: 'Mã Trắng b1 (3đ) nhảy chữ L ăn trọn Hậu Đen a3 (9đ) không có quân bảo vệ!'
+            },
+            {
+                id: 4, turn: 'b', profit: 2,
+                pieces: {
+                    '0,1': 'bR', '0,2': 'bB', '0,3': 'bQ', '0,4': 'bR', '0,6': 'bK',
+                    '1,2': 'bP', '1,5': 'bP', '1,6': 'bB', '1,7': 'bP',
+                    '2,0': 'bP', '2,3': 'bP', '2,5': 'bN', '2,6': 'bP',
+                    '3,3': 'wP', '3,4': 'bN',
+                    '4,1': 'bP', '4,3': 'wN', '4,4': 'wP',
+                    '5,2': 'wN', '5,4': 'wB', '5,6': 'wP',
+                    '6,0': 'wP', '6,1': 'wP', '6,2': 'wQ', '6,5': 'wP', '6,6': 'wB', '6,7': 'wP',
+                    '7,0': 'wR', '7,4': 'wR', '7,6': 'wK'
+                },
+                from: [4, 1], to: [5, 2],
+                math: 'Ăn Mã (+3) - Mất Tốt (-1) = LỜI +2 ĐIỂM!',
+                explanation: 'Tốt Đen b4 (1đ) ăn chéo Mã Trắng c3 (3đ)! Dù Tốt b2 ăn lại, Đen vẫn lời +2 điểm.'
+            },
+            {
+                id: 5, turn: 'b', profit: 2,
+                pieces: {
+                    '0,0': 'bR', '0,5': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,1': 'bB', '1,4': 'bB', '1,5': 'bP', '1,7': 'bP',
+                    '2,1': 'bQ', '2,4': 'bP', '2,6': 'bP',
+                    '3,1': 'bP', '3,4': 'wP',
+                    '4,2': 'bP', '4,3': 'wP', '4,5': 'wP',
+                    '5,0': 'wP', '5,2': 'wB', '5,5': 'wR', '5,6': 'wP', '5,7': 'wP',
+                    '6,1': 'wP', '6,2': 'wQ', '6,4': 'wB', '6,7': 'wK',
+                    '7,5': 'wR'
+                },
+                from: [1, 1], to: [5, 5],
+                math: 'Ăn Xe (+5) - Mất Tượng (-3) = LỜI +2 ĐIỂM!',
+                explanation: 'Tượng Đen b7 (3đ) phóng đường chéo ăn Xe Trắng f3 (5đ)! Dù Tốt g2 ăn lại Tượng, Đen vẫn lời +2 điểm.'
+            },
+            {
+                id: 6, turn: 'w', profit: 5,
+                pieces: {
+                    '0,7': 'bR',
+                    '1,0': 'bP', '1,2': 'bK', '1,3': 'bR', '1,5': 'bN',
+                    '2,1': 'bP', '2,3': 'bP', '2,4': 'bQ', '2,6': 'bP', '2,7': 'bP',
+                    '3,0': 'bN', '3,2': 'bP',
+                    '4,4': 'wP', '4,5': 'wQ',
+                    '5,1': 'wP', '5,2': 'wB', '5,3': 'wP', '5,6': 'wP',
+                    '6,2': 'wP', '6,4': 'wK', '6,6': 'wB',
+                    '7,4': 'wR', '7,5': 'wR'
+                },
+                from: [5, 2], to: [0, 7],
+                math: 'Ăn Xe (+5) - Mất 0 điểm = LỜI +5 ĐIỂM!',
+                explanation: 'Tượng Trắng c3 (3đ) bắn tỉa đường chéo dài ăn trọn Xe Đen h8 (5đ) không người bảo vệ!'
+            },
+            {
+                id: 7, turn: 'w', profit: 9,
+                pieces: {
+                    '0,0': 'bR', '0,6': 'bK',
+                    '1,1': 'bP', '1,5': 'bP', '1,6': 'bB', '1,7': 'bP',
+                    '2,1': 'bN', '2,4': 'bB', '2,6': 'bP',
+                    '3,1': 'wB', '3,4': 'wN',
+                    '4,3': 'bR',
+                    '5,5': 'wP', '5,6': 'wB',
+                    '6,0': 'bQ', '6,5': 'wR', '6,6': 'wP', '6,7': 'wP',
+                    '7,1': 'wR', '7,4': 'wQ', '7,6': 'wK'
+                },
+                from: [6, 5], to: [6, 0],
+                math: 'Ăn Hậu (+9) - Mất 0 điểm = LỜI +9 ĐIỂM!',
+                explanation: 'Xe Trắng f2 (5đ) quét ngang hàng 2 ăn trọn Hậu Đen a2 (9đ) không người bảo vệ!'
+            },
+            {
+                id: 8, turn: 'w', profit: 5,
+                pieces: {
+                    '0,1': 'bN', '0,2': 'bQ', '0,5': 'bK',
+                    '1,0': 'bP', '1,5': 'bN', '1,6': 'bP',
+                    '2,1': 'bP', '2,3': 'bR', '2,5': 'bP',
+                    '3,1': 'wP', '3,3': 'bP', '3,5': 'wP', '3,6': 'bP',
+                    '4,3': 'wP',
+                    '5,1': 'wN', '5,3': 'wQ', '5,4': 'wR', '5,6': 'wB', '5,7': 'wP',
+                    '6,0': 'wP', '6,7': 'wK'
+                },
+                from: [5, 6], to: [2, 3],
+                math: 'Ăn Xe (+5) - Mất 0 điểm = LỜI +5 ĐIỂM!',
+                explanation: 'Tượng Trắng g3 (3đ) bắn tỉa đường chéo ăn trọn Xe Đen d6 (5đ) không người bảo vệ!'
+            },
+            {
+                id: 9, turn: 'b', profit: 2,
+                pieces: {
+                    '0,0': 'bR', '0,4': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,5': 'bP', '1,6': 'bP',
+                    '2,1': 'bP', '2,2': 'bQ', '2,5': 'bB', '2,7': 'bP',
+                    '3,3': 'bP',
+                    '4,0': 'bB', '4,1': 'wP',
+                    '5,0': 'wP', '5,5': 'wN', '5,6': 'wP', '5,7': 'wP',
+                    '6,1': 'wP', '6,5': 'wP', '6,6': 'wB',
+                    '7,1': 'wQ', '7,3': 'wR', '7,4': 'wR', '7,6': 'wK'
+                },
+                from: [4, 0], to: [7, 3],
+                math: 'Ăn Xe (+5) - Mất Tượng (-3) = LỜI +2 ĐIỂM!',
+                explanation: 'Tượng Đen a4 (3đ) ăn Xe Trắng d1 (5đ)! Dù Xe e1 hoặc Hậu b1 ăn lại, Đen vẫn lời +2 điểm.'
+            },
+            {
+                id: 10, turn: 'w', profit: 2,
+                pieces: {
+                    '0,0': 'bR', '0,3': 'bQ', '0,5': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,1': 'bP', '1,2': 'bP', '1,3': 'bB', '1,5': 'bP', '1,6': 'bP', '1,7': 'bP',
+                    '2,2': 'bN', '2,3': 'bB',
+                    '3,3': 'wP', '3,4': 'bP',
+                    '4,2': 'bP', '4,4': 'wP',
+                    '5,2': 'wN', '5,5': 'wP', '5,6': 'wB',
+                    '6,0': 'wP', '6,1': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,3': 'wQ', '7,4': 'wK', '7,5': 'wB', '7,7': 'wR'
+                },
+                from: [3, 3], to: [2, 2],
+                math: 'Ăn Mã (+3) - Mất Tốt (-1) = LỜI +2 ĐIỂM!',
+                explanation: 'Tốt Trắng d5 (1đ) ăn chéo Mã Đen c6 (3đ)! Dù Tốt b7 ăn lại, Trắng vẫn lời +2 điểm.'
+            },
+            {
+                id: 11, turn: 'w', profit: 4,
+                pieces: {
+                    '0,3': 'bQ', '0,5': 'bR', '0,6': 'bK',
+                    '1,1': 'bP', '1,2': 'bR', '1,4': 'bB', '1,5': 'bP', '1,7': 'bP',
+                    '2,0': 'bP', '2,4': 'bP', '2,5': 'bN', '2,6': 'bP',
+                    '3,2': 'bP', '3,6': 'wB',
+                    '4,2': 'wQ', '4,4': 'wN',
+                    '5,1': 'wP', '5,7': 'wP',
+                    '6,0': 'wP', '6,1': 'wK', '6,2': 'wP', '6,5': 'wP', '6,6': 'wP',
+                    '7,3': 'wR', '7,7': 'wR'
+                },
+                from: [7, 3], to: [0, 3],
+                math: 'Ăn Hậu (+9) - Mất Xe (-5) = LỜI +4 ĐIỂM!',
+                explanation: 'Xe Trắng d1 (5đ) phóng thẳng cột d ăn Hậu Đen d8 (9đ)! Dù Xe f8 hoặc Tượng e7 ăn lại, Trắng lời +4 điểm.'
+            },
+            {
+                id: 12, turn: 'b', profit: 3,
+                pieces: {
+                    '0,0': 'bR', '0,1': 'bN', '0,3': 'bQ', '0,5': 'bR', '0,6': 'bK',
+                    '1,1': 'bB', '1,4': 'bB', '1,5': 'bP', '1,6': 'bP', '1,7': 'bP',
+                    '2,0': 'bP', '2,3': 'bP', '2,5': 'bN',
+                    '3,1': 'bP', '3,4': 'bP',
+                    '4,2': 'wB', '4,4': 'wP',
+                    '5,0': 'wP', '5,2': 'wN', '5,4': 'wB',
+                    '6,1': 'wP', '6,2': 'wP', '6,3': 'wN', '6,4': 'wQ', '6,5': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,5': 'wR', '7,6': 'wK'
+                },
+                from: [3, 1], to: [4, 2],
+                math: 'Ăn Tượng (+3) - Mất 0 điểm = LỜI +3 ĐIỂM!',
+                explanation: 'Tốt Đen b5 (1đ) ăn chéo trọn Tượng Trắng c4 (3đ) không có quân bảo vệ!'
+            },
+            {
+                id: 13, turn: 'w', profit: 4,
+                pieces: {
+                    '0,0': 'bR', '0,5': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,1': 'bP', '1,5': 'bP',
+                    '2,1': 'bQ', '2,3': 'wR', '2,5': 'bB', '2,6': 'bP', '2,7': 'bP',
+                    '5,4': 'wP',
+                    '6,1': 'wP', '6,3': 'wQ', '6,4': 'wB', '6,5': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,6': 'wK'
+                },
+                from: [2, 3], to: [2, 1],
+                math: 'Ăn Hậu (+9) - Mất Xe (-5) = LỜI +4 ĐIỂM!',
+                explanation: 'Xe Trắng d6 (5đ) ăn Hậu Đen b6 (9đ)! Dù Tốt a7 ăn lại Xe, Trắng vẫn lời +4 điểm.'
+            },
+            {
+                id: 14, turn: 'b', profit: 2,
+                pieces: {
+                    '0,0': 'bR', '0,5': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,1': 'bP', '1,4': 'bB', '1,5': 'bP', '1,6': 'bP', '1,7': 'bP',
+                    '2,0': 'bN', '2,3': 'bQ', '2,4': 'bP', '2,6': 'bB',
+                    '3,3': 'wN',
+                    '4,0': 'wP', '4,2': 'wQ', '4,4': 'wP',
+                    '5,2': 'wB', '5,5': 'wP',
+                    '6,1': 'wP', '6,4': 'wB', '6,6': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,3': 'wR', '7,7': 'wK'
+                },
+                from: [2, 4], to: [3, 3],
+                math: 'Ăn Mã (+3) - Mất Tốt (-1) = LỜI +2 ĐIỂM!',
+                explanation: 'Tốt Đen e6 (1đ) ăn chéo Mã Trắng d5 (3đ)! Dù Trắng ăn lại Tốt, Đen vẫn lời +2 điểm.'
+            },
+            {
+                id: 15, turn: 'b', profit: 5,
+                pieces: {
+                    '0,1': 'bR', '0,5': 'bK',
+                    '1,1': 'bP', '1,2': 'bP', '1,4': 'bR', '1,6': 'bB', '1,7': 'bP',
+                    '2,2': 'bN', '2,3': 'bP', '2,6': 'bP',
+                    '3,0': 'bP', '3,3': 'wB',
+                    '4,2': 'wP',
+                    '5,1': 'wP', '5,6': 'wP',
+                    '6,0': 'wP', '6,3': 'wN', '6,5': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,4': 'wR', '7,6': 'wK'
+                },
+                from: [1, 4], to: [7, 4],
+                math: 'Ăn Xe (+5) - Mất 0 điểm = LỜI +5 ĐIỂM!',
+                explanation: 'Xe Đen e7 (5đ) lao xuống cột e ăn trọn Xe Trắng e1 (5đ) không người bảo vệ!'
+            },
+            {
+                id: 16, turn: 'b', profit: 9,
+                pieces: {
+                    '0,2': 'bB', '0,4': 'bR', '0,5': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,5': 'bP', '1,6': 'bP',
+                    '2,1': 'bP', '2,7': 'bP',
+                    '3,2': 'bQ', '3,4': 'wB', '3,5': 'wQ',
+                    '4,2': 'wP', '4,5': 'wP',
+                    '5,1': 'wP',
+                    '6,0': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,1': 'wB', '7,2': 'wR', '7,5': 'wR', '7,7': 'wK'
+                },
+                from: [0, 2], to: [3, 5],
+                math: 'Ăn Hậu (+9) - Mất 0 điểm = LỜI +9 ĐIỂM!',
+                explanation: 'Tượng Đen c8 (3đ) bắn tỉa đường chéo ăn trọn Hậu Trắng f5 (9đ) không người bảo vệ!'
+            },
+            {
+                id: 17, turn: 'w', profit: 6,
+                pieces: {
+                    '0,4': 'bR', '0,5': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,1': 'bB', '1,6': 'bP', '1,7': 'bP',
+                    '2,1': 'bP', '2,2': 'bP', '2,3': 'bB',
+                    '3,3': 'bP', '3,4': 'bP',
+                    '4,2': 'bQ',
+                    '5,2': 'wP', '5,3': 'wN', '5,6': 'wP',
+                    '6,0': 'wP', '6,1': 'wP', '6,3': 'wN', '6,4': 'wP', '6,5': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,3': 'wQ', '7,5': 'wR', '7,6': 'wK'
+                },
+                from: [6, 3], to: [4, 2],
+                math: 'Ăn Hậu (+9) - Mất Mã (-3) = LỜI +6 ĐIỂM!',
+                explanation: 'Mã Trắng d2 (3đ) nhảy chữ L ăn Hậu Đen c4 (9đ)! Dù Tốt b5 hoặc Tượng d6 ăn lại, Trắng lời +6 điểm.'
+            },
+            {
+                id: 18, turn: 'w', profit: 2,
+                pieces: {
+                    '1,6': 'bP',
+                    '2,0': 'bP', '2,5': 'bK',
+                    '3,1': 'bP', '3,2': 'bP', '3,3': 'bR', '3,4': 'wR',
+                    '4,2': 'bB', '4,5': 'wP',
+                    '5,0': 'wP', '5,1': 'wP', '5,4': 'wK',
+                    '6,2': 'wP', '6,6': 'wP', '6,7': 'wP'
+                },
+                from: [5, 1], to: [4, 2],
+                math: 'Ăn Tượng (+3) - Mất Tốt (-1) = LỜI +2 ĐIỂM!',
+                explanation: 'Tốt Trắng b3 (1đ) ăn chéo Tượng Đen c4 (3đ)! Dù Xe d5 ăn lại Tốt, Trắng vẫn lời +2 điểm.'
+            },
+            {
+                id: 19, turn: 'b', profit: 6,
+                pieces: {
+                    '0,0': 'bR', '0,4': 'bK', '0,7': 'bR',
+                    '1,0': 'bP', '1,1': 'bP', '1,3': 'bB', '1,4': 'bB', '1,7': 'bP',
+                    '2,2': 'bN', '2,5': 'bP', '2,6': 'bP',
+                    '3,1': 'wB',
+                    '4,3': 'bQ',
+                    '5,0': 'wP', '5,2': 'wN', '5,4': 'wN', '5,7': 'wQ',
+                    '6,1': 'wP', '6,2': 'wP', '6,5': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,4': 'wK', '7,7': 'wR'
+                },
+                from: [1, 3], to: [5, 7],
+                math: 'Ăn Hậu (+9) - Mất Tượng (-3) = LỜI +6 ĐIỂM!',
+                explanation: 'Tượng Đen d7 (3đ) phóng đường chéo ăn Hậu Trắng h3 (9đ)! Dù Tốt g2 ăn lại, Đen vẫn lời +6 điểm.'
+            },
+            {
+                id: 20, turn: 'b', profit: 4,
+                pieces: {
+                    '0,0': 'bR', '0,3': 'bR', '0,6': 'bK',
+                    '1,0': 'bP', '1,1': 'bP', '1,2': 'bP', '1,4': 'bQ', '1,5': 'bP', '1,6': 'bP', '1,7': 'bP',
+                    '2,6': 'bN',
+                    '3,5': 'wB',
+                    '4,1': 'wP', '4,2': 'wP', '4,3': 'wQ', '4,4': 'bN',
+                    '5,0': 'wP', '5,4': 'wP', '5,7': 'wP',
+                    '6,1': 'wB', '6,5': 'wP', '6,6': 'wP',
+                    '7,2': 'wR', '7,5': 'wR', '7,6': 'wK'
+                },
+                from: [0, 3], to: [4, 3],
+                math: 'Ăn Hậu (+9) - Mất Xe (-5) = LỜI +4 ĐIỂM!',
+                explanation: 'Xe Đen d8 (5đ) lao thẳng cột d ăn Hậu Trắng d4 (9đ)! Dù Tốt e3 ăn lại Xe, Đen vẫn lời +4 điểm.'
+            },
+            {
+                id: 21, turn: 'w', profit: 2,
+                pieces: {
+                    '0,1': 'bR', '0,4': 'bK', '0,7': 'bR',
+                    '1,1': 'bP', '1,2': 'bP', '1,3': 'bQ', '1,5': 'bP', '1,6': 'bP', '1,7': 'bP',
+                    '2,0': 'bP', '2,3': 'bB', '2,4': 'bP', '2,5': 'bN',
+                    '3,3': 'bP', '3,4': 'wP', '3,5': 'bB',
+                    '4,5': 'wB',
+                    '5,1': 'wQ', '5,2': 'wN',
+                    '6,0': 'wP', '6,1': 'wP', '6,5': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,0': 'wR', '7,4': 'wK', '7,5': 'wB', '7,7': 'wR'
+                },
+                from: [3, 4], to: [2, 3], altTo: [2, 5],
+                math: 'Ăn Tượng/Mã (+3) - Mất Tốt (-1) = LỜI +2 ĐIỂM!',
+                explanation: 'Tốt Trắng e5 (1đ) bắt đôi Tượng Đen d6 (3đ) và Mã Đen f6 (3đ)! Ăn quân nào Trắng cũng lời +2 điểm.'
+            },
+            {
+                id: 22, turn: 'w', profit: 6,
+                pieces: {
+                    '0,3': 'bR', '0,6': 'bK',
+                    '1,1': 'bP', '1,6': 'bP', '1,7': 'bP',
+                    '2,2': 'bQ', '2,4': 'bR',
+                    '3,3': 'wB', '3,4': 'wP', '3,5': 'bB',
+                    '5,0': 'wQ',
+                    '6,0': 'wP', '6,1': 'wP', '6,5': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,3': 'wR', '7,6': 'wK'
+                },
+                from: [3, 3], to: [2, 2],
+                math: 'Ăn Hậu (+9) - Mất Tượng (-3) = LỜI +6 ĐIỂM!',
+                explanation: 'Tượng Trắng d5 (3đ) ăn Hậu Đen c6 (9đ)! Dù Tốt b7 ăn lại Tượng, Trắng vẫn lời tới +6 điểm.'
+            },
+            {
+                id: 23, turn: 'w', profit: 2,
+                pieces: {
+                    '0,0': 'bK', '0,2': 'bR',
+                    '1,0': 'bP', '1,1': 'bP', '1,2': 'bR', '1,5': 'bP',
+                    '2,1': 'bN', '2,4': 'bQ', '2,6': 'bP',
+                    '3,3': 'wN', '3,4': 'bP',
+                    '5,0': 'wP', '5,1': 'wQ',
+                    '6,1': 'wP', '6,5': 'wP', '6,6': 'wP', '6,7': 'wP',
+                    '7,3': 'wR', '7,5': 'wR', '7,6': 'wK'
+                },
+                from: [3, 3], to: [1, 2],
+                math: 'Ăn Xe (+5) - Mất Mã (-3) = LỜI +2 ĐIỂM!',
+                explanation: 'Mã Trắng d5 (3đ) nhảy chữ L ăn Xe Đen c7 (5đ)! Dù Xe c8 ăn lại Mã, Trắng vẫn lời +2 điểm.'
+            }
+        ];
+
+        const MOVE_RULES = [
+            {
+                type: 'R', name: 'Xe', points: '5 điểm', badge: 'Đường thẳng',
+                mantra: '"Xe đi ngang dọc như tàu hỏa, gặp vật cản thì dừng lại!"',
+                detail: '• Di chuyển thẳng theo hàng ngang hoặc cột dọc bao nhiêu ô tùy thích.',
+                special: '⭐ Bí kíp: Xe không thể nhảy qua đầu quân khác!',
+                startPos: [4, 3]
+            },
+            {
+                type: 'B', name: 'Tượng', points: '3 điểm', badge: 'Đường chéo',
+                mantra: '"Tượng đi đường chéo thật xa, ô màu nào đứng mãi màu đó!"',
+                detail: '• Di chuyển theo các đường chéo bao nhiêu ô tùy thích.',
+                special: '⭐ Bí kíp: Tượng ô sáng chỉ đi được trên các ô sáng!',
+                startPos: [4, 3]
+            },
+            {
+                type: 'Q', name: 'Hậu', points: '9 điểm', badge: 'Xe + Tượng',
+                mantra: '"Nữ Hoàng Hậu quyền năng tối thượng, ngang dọc chéo đi được cả ba!"',
+                detail: '• Kết hợp cách đi của cả Xe và Tượng: ngang, dọc và chéo bao nhiêu ô tùy thích.',
+                special: '⭐ Bí kíp: Quân mạnh nhất bàn cờ nhưng không nhảy qua đầu quân khác được!',
+                startPos: [4, 3]
+            },
+            {
+                type: 'N', name: 'Mã', points: '3 điểm', badge: 'Nhảy chữ L',
+                mantra: '"Mã nhảy chữ L thần kỳ, vượt qua đầu quân khác chẳng hề ngại chi!"',
+                detail: '• Đi 2 ô thẳng rồi rẽ ngang 1 ô (tạo thành hình chữ L).',
+                special: '⭐ Bí kíp: Là quân DUY NHẤT nhảy qua đầu quân khác được!',
+                startPos: [4, 3]
+            },
+            {
+                type: 'P', name: 'Tốt', points: '1 điểm', badge: 'Đi thẳng - Ăn chéo',
+                mantra: '"Tốt chỉ tiến không bao giờ lùi, đi thẳng một bước ăn chéo một ô!"',
+                detail: '• Đi thẳng 1 ô (ở hàng 2 được đi 2 ô). Ăn quân đối thủ theo đường chéo 1 ô phía trước.',
+                special: '⭐ Bí kíp: Tới cuối bàn cờ (hàng 8), Tốt được Phong Cấp thành Hậu (9đ)!',
+                startPos: [6, 3]
+            },
+            {
+                type: 'K', name: 'Vua', points: 'Vô giá 👑', badge: 'Từng bước uy nghiêm',
+                mantra: '"Đức Vua đi từng bước một thôi, xung quanh tám hướng chẳng nơi nào nhầm!"',
+                detail: '• Đi được 1 ô duy nhất sang mọi hướng xung quanh (ngang, dọc, chéo).',
+                special: '⭐ Bí kíp: Vua không bao giờ được bước vào ô đang bị quân địch chiếu!',
+                startPos: [4, 3]
+            }
+        ];
+
+        const HERO_DATA = [
+            { id: 'P', name: 'Tốt', points: '1 điểm', color: 'bg-emerald-50 border-emerald-400 text-emerald-900', title: 'Chiến Binh Tốt (1 Điểm)', desc: 'Tuy nhỏ bé nhưng luôn dũng cảm tiến lên phía trước! Là đơn vị chuẩn để đo sức mạnh các quân khác.', eq: '1 Tốt = 1 Điểm Chuẩn' },
+            { id: 'N', name: 'Mã', points: '3 điểm', color: 'bg-sky-50 border-sky-400 text-sky-900', title: 'Kỵ Sĩ Mã (3 Điểm)', desc: 'Chú ngựa chiến đi hình chữ L, có siêu năng lực nhảy qua đầu các quân khác!', eq: '1 Mã (3đ) = 3 Quân Tốt' },
+            { id: 'B', name: 'Tượng', points: '3 điểm', color: 'bg-indigo-50 border-indigo-400 text-indigo-900', title: 'Pháp Sư Tượng (3 Điểm)', desc: 'Xạ thủ bắn tỉa đường chéo siêu xa! Rất lợi hại khi bàn cờ rộng mở.', eq: '1 Tượng (3đ) = 1 Mã = 3 Tốt' },
+            { id: 'R', name: 'Xe', points: '5 điểm', color: 'bg-amber-50 border-amber-400 text-amber-900', title: 'Pháo Đài Xe (5 Điểm)', desc: 'Cỗ xe tăng hạng nặng càn quét hàng ngang và cột dọc. Hơn Mã/Tượng tới 2 điểm!', eq: '1 Xe (5đ) = 1 Mã + 2 Tốt' },
+            { id: 'Q', name: 'Hậu', points: '9 điểm', color: 'bg-rose-50 border-rose-400 text-rose-900', title: 'Nữ Hoàng Hậu (9 Điểm)', desc: 'Siêu anh hùng mạnh nhất bàn cờ! Kết hợp sức mạnh của cả Xe và Tượng.', eq: '1 Hậu (9đ) = 1 Xe + 1 Mã + 1 Tốt' },
+            { id: 'K', name: 'Vua', points: 'Vô giá 👑', color: 'bg-purple-50 border-purple-400 text-purple-900', title: 'Đức Vua Tối Cao (Vô Giá 👑)', desc: 'Trái tim của vương quốc! Không bao giờ được đổi Vua vì mất Vua là thua ngay.', eq: 'Vua = Vô Giá' }
+        ];
+
+        const ARENA_QUESTIONS = [
+            { left: ['R'], right: ['N', 'B'], label: 'Xe (5đ)  ⇄  Mã + Tượng (3đ + 3đ)', text: 'Đổi 1 Xe của mình lấy 1 Mã + 1 Tượng của đối thủ: LỜI, LỖ hay HÒA?', answer: 'LOI', explain: '🤑 LỜI +1 ĐIỂM! Vì ăn được 3 + 3 = 6 điểm, trong khi chỉ mất 1 Xe (5 điểm)!' },
+            { left: ['Q'], right: ['R', 'R'], label: 'Hậu (9đ)  ⇄  Xe + Xe (5đ + 5đ)', text: 'Đổi 1 Hậu của mình lấy 2 Xe của đối thủ: LỜI, LỖ hay HÒA?', answer: 'LOI', explain: '🤑 LỜI +1 ĐIỂM! Hai Xe cộng lại là 5 + 5 = 10 điểm, mạnh hơn 1 Hậu (9 điểm)!' },
+            { left: ['N'], right: ['B'], label: 'Mã (3đ)  ⇄  Tượng (3đ)', text: 'Đổi 1 Mã của mình lấy 1 Tượng của đối thủ: LỜI, LỖ hay HÒA?', answer: 'HOA', explain: '🤝 HÒA ĐIỂM! Vì Mã và Tượng đều có giá trị bằng nhau là 3 điểm.' },
+            { left: ['R'], right: ['N', 'P'], label: 'Xe (5đ)  ⇄  Mã + Tốt (3đ + 1đ)', text: 'Đổi 1 Xe của mình lấy 1 Mã + 1 Tốt của đối thủ: LỜI, LỖ hay HÒA?', answer: 'LO', explain: '😭 LỖ -1 ĐIỂM! Vì ăn được 3 + 1 = 4 điểm, nhưng lại mất Xe tới 5 điểm!' },
+            { left: ['Q'], right: ['R', 'B', 'P'], label: 'Hậu (9đ)  ⇄  Xe + Tượng + Tốt (5+3+1)', text: 'Đổi 1 Hậu lấy 1 Xe + 1 Tượng + 1 Tốt: LỜI, LỖ hay HÒA?', answer: 'HOA', explain: '🤝 HÒA ĐIỂM! 5 + 3 + 1 = 9 điểm, bằng đúng giá trị của 1 quân Hậu!' },
+            { left: ['P'], right: ['N'], label: 'Tốt (1đ)  ⇄  Mã (3đ)', text: 'Dùng 1 Tốt của mình đổi lấy 1 Mã của đối thủ: LỜI, LỖ hay HÒA?', answer: 'LOI', explain: '🤑 LỜI +2 ĐIỂM! Ăn được Mã 3 điểm mà chỉ mất Tốt 1 điểm!' }
+        ];
+
+        const PIECE_VALUES = { P: 1, N: 3, B: 3, R: 5, Q: 9 };
+
+        // =========================================================
+        // 4. COMPONENT MŨI TÊN VECTOR TRÊN BÀN CỜ
+        // =========================================================
+        const BoardArrow = ({ arrow }) => {
+            if (!arrow) return null;
+            const { fromR, fromC, toR, toC, color } = arrow;
+            const x1 = fromC * 100 + 50;
+            const y1 = fromR * 100 + 50;
+            const x2 = toC * 100 + 50;
+            const y2 = toR * 100 + 50;
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            const headLen = 38;
+            const endX = x2 - Math.cos(angle) * 18;
+            const endY = y2 - Math.sin(angle) * 18;
+            const p1x = endX - headLen * Math.cos(angle - Math.PI / 6);
+            const p1y = endY - headLen * Math.sin(angle - Math.PI / 6);
+            const p2x = endX - headLen * Math.cos(angle + Math.PI / 6);
+            const p2y = endY - headLen * Math.sin(angle + Math.PI / 6);
+
+            return (
+                <svg viewBox="0 0 800 800" className="absolute inset-0 w-full h-full pointer-events-none z-20">
+                    <circle cx={x1} cy={y1} r="14" fill={color} opacity="0.88" />
+                    <line
+                        x1={x1} y1={y1}
+                        x2={endX - Math.cos(angle) * 14}
+                        y2={endY - Math.sin(angle) * 14}
+                        stroke={color} strokeWidth="18" strokeLinecap="round" opacity="0.92"
+                    />
+                    <polygon points={`${endX},${endY} ${p1x},${p1y} ${p2x},${p2y}`} fill={color} />
+                </svg>
+            );
+        };
+
+        // =========================================================
+        // 5. ỨNG DỤNG CHÍNH: SIÊU NHÍ CỜ VUA
+        // =========================================================
+        function App() {
+            const [activeTab, setActiveTab] = useState('puzzles');
+            const [navCollapsed, setNavCollapsed] = useState(false);
+            const [soundOn, setSoundOn] = useState(true);
+
+            // Đồng bộ class body để co giãn bàn cờ khi thu gọn navbar
+            useEffect(() => {
+                if (navCollapsed) document.body.classList.add('nav-collapsed');
+                else document.body.classList.remove('nav-collapsed');
+            }, [navCollapsed]);
+
+            const handleToggleSound = () => {
+                const next = !soundOn;
+                setSoundOn(next);
+                SoundFX.enabled = next;
+                if (next) SoundFX.click();
+            };
+
+            // --- State Tab 1: Bí Kíp Đi Quân ---
+            const [moveIdx, setMoveIdx] = useState(0);
+            const [movePos, setMovePos] = useState([4, 3]);
+            const [stars, setStars] = useState([]);
+            const [stepCount, setStepCount] = useState(0);
+            const [starChallenge, setStarChallenge] = useState(false);
+            const [starMsg, setStarMsg] = useState('Bấm "Rải Sao Mới" hoặc bấm vào chấm xanh lá để đi thử!');
+
+            const selectMoveRule = (idx) => {
+                SoundFX.click();
+                setMoveIdx(idx);
+                setMovePos([...MOVE_RULES[idx].startPos]);
+                setStars([]);
+                setStepCount(0);
+                setStarChallenge(false);
+                setStarMsg('Bấm "Rải Sao Mới" hoặc bấm vào chấm xanh lá để đi thử!');
+            };
+
+            const getValidDemoMoves = (type, r, c) => {
+                const moves = [];
+                const ok = (nr, nc) => nr >= 0 && nr < 8 && nc >= 0 && nc < 8;
+                if (type === 'R' || type === 'Q') {
+                    [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr, dc]) => {
+                        for (let s = 1; s < 8; s++) if (ok(r + dr*s, c + dc*s)) moves.push({ r: r + dr*s, c: c + dc*s, capOnly: false });
+                    });
+                }
+                if (type === 'B' || type === 'Q') {
+                    [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr, dc]) => {
+                        for (let s = 1; s < 8; s++) if (ok(r + dr*s, c + dc*s)) moves.push({ r: r + dr*s, c: c + dc*s, capOnly: false });
+                    });
+                }
+                if (type === 'N') {
+                    [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr, dc]) => {
+                        if (ok(r + dr, c + dc)) moves.push({ r: r + dr, c: c + dc, capOnly: false });
+                    });
+                }
+                if (type === 'K') {
+                    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+                        if ((dr || dc) && ok(r + dr, c + dc)) moves.push({ r: r + dr, c: c + dc, capOnly: false });
+                    }
+                }
+                if (type === 'P') {
+                    if (ok(r - 1, c)) moves.push({ r: r - 1, c: c, capOnly: false });
+                    if (r === 6 && ok(r - 2, c)) moves.push({ r: r - 2, c: c, capOnly: false });
+                    if (ok(r - 1, c - 1)) moves.push({ r: r - 1, c: c - 1, capOnly: true });
+                    if (ok(r - 1, c + 1)) moves.push({ r: r - 1, c: c + 1, capOnly: true });
+                }
+                return moves;
+            };
+
+            const startStars = () => {
+                SoundFX.capture();
+                const rule = MOVE_RULES[moveIdx];
+                const start = [...rule.startPos];
+                setMovePos(start);
+                setStepCount(0);
+                setStarChallenge(true);
+                const pool = [];
+                for (let r = 0; r < 8; r++) {
+                    for (let c = 0; c < 8; c++) {
+                        if (r === start[0] && c === start[1]) continue;
+                        if (rule.type === 'B' && ((r + c) % 2 !== (start[0] + start[1]) % 2)) continue;
+                        if (rule.type === 'P' && (r >= start[0] || Math.abs(c - start[1]) > (start[0] - r))) continue;
+                        pool.push({ r, c });
+                    }
+                }
+                pool.sort(() => Math.random() - 0.5);
+                const chosen = pool.slice(0, 4);
+                setStars(chosen);
+                setStarMsg(`Còn ${chosen.length} ngôi sao ⭐ trên bàn cờ!`);
+            };
+
+            // --- State Tab 2: Điểm & Cân Công Lý ---
+            const [heroIdx, setHeroIdx] = useState(0);
+            const [leftPan, setLeftPan] = useState([]);
+            const [rightPan, setRightPan] = useState([]);
+
+            // --- State Tab 3: Thử Thách Đổi Quân & Tranh Bí Ẩn 6x4 (23 bài + 1 ô thưởng) ---
+            const [puzzleIdx, setPuzzleIdx] = useState(0);
+            const [boardState, setBoardState] = useState({ ...PUZZLES[0].pieces });
+            const [selectedSq, setSelectedSq] = useState(null);
+            const [lastMoveSq, setLastMoveSq] = useState([]);
+            const [solved, setSolved] = useState(false);
+            const [arrow, setArrow] = useState(null);
+            const [feedback, setFeedback] = useState(null);
+            const [unlockedTiles, setUnlockedTiles] = useState(Array(23).fill(false));
+            const [justUnlocked, setJustUnlocked] = useState(-1);
+            const [artKey, setArtKey] = useState('knightCup');
+            const [showVictory, setShowVictory] = useState(false);
+            const canvasRef = useRef(null);
+
+            const loadPuzzle = (idx) => {
+                SoundFX.click();
+                setPuzzleIdx(idx);
+                setBoardState({ ...PUZZLES[idx].pieces });
+                setSelectedSq(null);
+                setLastMoveSq([]);
+                setSolved(false);
+                setArrow(null);
+                setFeedback(null);
+            };
+
+            const launchFireworks = () => {
+                const canvas = canvasRef.current;
+                if (!canvas) return;
+                canvas.classList.remove('hidden');
+                const ctx = canvas.getContext('2d');
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                const particles = [];
+                const colors = ['#f43f5e', '#f59e0b', '#10b981', '#3b82f6', '#a855f7'];
+                for (let b = 0; b < 6; b++) {
+                    const cx = canvas.width * (0.2 + Math.random() * 0.6);
+                    const cy = canvas.height * (0.2 + Math.random() * 0.45);
+                    const color = colors[b % colors.length];
+                    for (let i = 0; i < 42; i++) {
+                        const a = (Math.PI * 2 * i) / 42;
+                        const spd = 2 + Math.random() * 5;
+                        particles.push({ x: cx, y: cy, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, alpha: 1, color });
+                    }
+                }
+                let f = 0;
+                const loop = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    particles.forEach(p => {
+                        p.x += p.vx; p.y += p.vy; p.vy += 0.08; p.alpha -= 0.014;
+                        if (p.alpha > 0) {
+                            ctx.globalAlpha = p.alpha;
+                            ctx.fillStyle = p.color;
+                            ctx.beginPath();
+                            ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    });
+                    f++;
+                    if (f < 85) requestAnimationFrame(loop);
+                    else canvas.classList.add('hidden');
+                };
+                loop();
+            };
+
+            const onPuzzleSquareClick = (r, c) => {
+                if (solved) return;
+                const puzzle = PUZZLES[puzzleIdx];
+                const code = boardState[`${r},${c}`];
+
+                if (code && code.startsWith(puzzle.turn)) {
+                    SoundFX.click();
+                    setSelectedSq([r, c]);
+                    return;
+                }
+
+                if (selectedSq) {
+                    const [fr, fc] = selectedSq;
+                    const isMainTarget = r === puzzle.to[0] && c === puzzle.to[1];
+                    const isAltTarget = puzzle.altTo && r === puzzle.altTo[0] && c === puzzle.altTo[1];
+
+                    if (fr === puzzle.from[0] && fc === puzzle.from[1] && (isMainTarget || isAltTarget)) {
+                        const nextBoard = { ...boardState };
+                        const moving = nextBoard[`${fr},${fc}`];
+                        delete nextBoard[`${fr},${fc}`];
+                        nextBoard[`${r},${c}`] = moving;
+                        setBoardState(nextBoard);
+                        setSelectedSq(null);
+                        setLastMoveSq([`${fr},${fc}`, `${r},${c}`]);
+                        setSolved(true);
+                        setArrow({ fromR: fr, fromC: fc, toR: r, toC: c, color: '#15803d' });
+
+                        const wasUnlocked = unlockedTiles[puzzleIdx];
+                        const nextTiles = [...unlockedTiles];
+                        nextTiles[puzzleIdx] = true;
+                        setUnlockedTiles(nextTiles);
+                        setJustUnlocked(puzzleIdx);
+
+                        if (nextTiles.every(Boolean) && !wasUnlocked) {
+                            SoundFX.victory();
+                            launchFireworks();
+                            setTimeout(() => setShowVictory(true), 800);
+                        } else {
+                            SoundFX.unlock();
+                        }
+
+                        setFeedback({
+                            ok: true,
+                            heading: `Mở khóa ô màu số ${puzzleIdx + 1}/23!`,
+                            math: puzzle.math,
+                            explanation: puzzle.explanation
+                        });
+                    } else {
+                        SoundFX.error();
+                        setArrow({ fromR: fr, fromC: fc, toR: r, toC: c, color: '#dc2626' });
+                        setFeedback({
+                            ok: false,
+                            heading: 'Chưa phải nước đổi quân lời nhất!',
+                            math: 'Hãy tính lại điểm quân ăn được trừ quân bị mất nhé!',
+                            explanation: 'Gợi ý: Tìm quân đối thủ có điểm cao hơn quân mình hoặc không có người bảo vệ.'
+                        });
+                        setSelectedSq(null);
+                    }
+                }
+            };
+
+            // --- State Tab 4: Đấu Trường Đội ---
+            const [redScore, setRedScore] = useState(0);
+            const [blueScore, setBlueScore] = useState(0);
+            const [arenaIdx, setArenaIdx] = useState(0);
+            const [arenaReveal, setArenaReveal] = useState(null);
+            const [timeLeft, setTimeLeft] = useState(15);
+            const [timerRunning, setTimerRunning] = useState(false);
+
+            useEffect(() => {
+                if (!timerRunning) return;
+                const id = setInterval(() => {
+                    setTimeLeft(prev => {
+                        if (prev <= 6 && prev > 1) SoundFX.tick();
+                        if (prev <= 1) {
+                            setTimerRunning(false);
+                            SoundFX.error();
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+                }, 1000);
+                return () => clearInterval(id);
+            }, [timerRunning]);
+
+            const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+            const currentPuzzle = PUZZLES[puzzleIdx];
+            const unlockedCount = unlockedTiles.filter(Boolean).length;
+            const totalProfit = PUZZLES.reduce((acc, p, i) => acc + (unlockedTiles[i] ? p.profit : 0), 0);
+
+            const leftSum = leftPan.reduce((s, t) => s + PIECE_VALUES[t], 0);
+            const rightSum = rightPan.reduce((s, t) => s + PIECE_VALUES[t], 0);
+            const panDiff = leftSum - rightSum;
+
+            return (
+                <div className="h-full flex flex-col">
+                    <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-[100] hidden" />
+
+                    {/* ================================================= */}
+                    {/* NAVBAR 1 HÀNG + NÚT THU GỌN CHO MÁY CHIẾU         */}
+                    {/* ================================================= */}
+                    <header className="bg-[#7c2d12] text-white shadow-md shrink-0 z-50">
+                        {!navCollapsed ? (
+                            <div className="max-w-7xl mx-auto px-3 py-2 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <div className="w-8 h-8 bg-amber-400 rounded-lg flex items-center justify-center border-2 border-amber-200 p-1">
+                                        <ChessPiece type="K" color="w" />
+                                    </div>
+                                    <div className="hidden md:block">
+                                        <h1 className="text-base font-bold tracking-wide leading-none text-amber-100">SIÊU NHÍ CỜ VUA</h1>
+                                        <p className="text-[11px] font-bold text-amber-300 leading-tight">Đổi Quân Có Lợi Thế</p>
+                                    </div>
+                                </div>
+
+                                <nav className="flex items-center gap-1.5 overflow-x-auto">
+                                    {[
+                                        { id: 'moves', label: '1. Bí Kíp Đi Quân' },
+                                        { id: 'heroes', label: '2. Điểm & Cân Công Lý' },
+                                        { id: 'puzzles', label: '3. Thử Thách Đổi Quân' },
+                                        { id: 'arena', label: '4. Đấu Trường Đội' }
+                                    ].map(tab => (
+                                        <button
+                                            key={tab.id}
+                                            onClick={() => { SoundFX.click(); setActiveTab(tab.id); }}
+                                            className={`px-3 py-1.5 rounded-xl font-extrabold text-xs sm:text-sm transition-all shrink-0 ${
+                                                activeTab === tab.id
+                                                    ? 'bg-[#fef3c7] text-[#7c2d12] shadow-sm scale-[1.02]'
+                                                    : 'bg-[#9a3412] text-amber-100 hover:bg-[#b45309]'
+                                            }`}
+                                        >
+                                            {tab.label}
+                                        </button>
+                                    ))}
+                                </nav>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    <button
+                                        onClick={handleToggleSound}
+                                        className="px-2.5 py-1.5 rounded-xl bg-[#9a3412] hover:bg-[#b45309] text-amber-100 font-bold text-xs flex items-center gap-1 border border-amber-500/40"
+                                    >
+                                        <span>{soundOn ? '🔊' : '🔇'}</span>
+                                        <span className="hidden lg:inline">{soundOn ? 'Âm thanh: BẬT' : 'TẮT'}</span>
+                                    </button>
+                                    <button
+                                        onClick={() => { SoundFX.click(); setNavCollapsed(true); }}
+                                        className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-amber-950 font-extrabold text-xs flex items-center gap-1"
+                                    >
+                                        <span>▲</span>
+                                        <span className="hidden sm:inline">Thu gọn</span>
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="max-w-7xl mx-auto px-3 h-8 flex items-center justify-between bg-[#5c1d09]">
+                                <div className="flex items-center gap-2 text-xs font-extrabold text-amber-200">
+                                    <span>👑 SIÊU NHÍ CỜ VUA</span>
+                                    <span className="text-amber-500">|</span>
+                                    <span className="text-white">
+                                        {activeTab === 'moves' && '1. Bí Kíp Đi Quân'}
+                                        {activeTab === 'heroes' && '2. Điểm & Cân Công Lý'}
+                                        {activeTab === 'puzzles' && '3. Thử Thách Đổi Quân & Tranh Bí Ẩn'}
+                                        {activeTab === 'arena' && '4. Đấu Trường Đội'}
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={handleToggleSound} className="text-xs px-2 py-0.5 rounded bg-[#7c2d12] text-amber-100">
+                                        {soundOn ? '🔊' : '🔇'}
+                                    </button>
+                                    <button
+                                        onClick={() => { SoundFX.click(); setNavCollapsed(false); }}
+                                        className="px-2.5 py-0.5 rounded bg-amber-400 hover:bg-amber-300 text-amber-950 text-xs font-extrabold"
+                                    >
+                                        ▼ Mở rộng menu
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </header>
+
+                    {/* ================================================= */}
+                    {/* NỘI DUNG CHÍNH VỪA KHÍT MÀN HÌNH CHIẾU            */}
+                    {/* ================================================= */}
+                    <main className="flex-1 overflow-y-auto px-3 py-2 flex flex-col justify-center">
+                        <div className="max-w-7xl w-full mx-auto">
+
+                            {/* --------------------------------------------- */}
+                            {/* TAB 1: BÍ KÍP ĐI QUÂN (QUÂN CỜ SVG CHUẨN)      */}
+                            {/* --------------------------------------------- */}
+                            {activeTab === 'moves' && (
+                                <section className="bg-white/95 rounded-3xl p-4 shadow-xl border-4 border-amber-400 bounce-in">
+                                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b-2 border-amber-100">
+                                        <div>
+                                            <h2 className="text-lg sm:text-xl font-extrabold text-[#7c2d12]">🧭 Bí Kíp Đi Quân Siêu Dễ Nhớ</h2>
+                                            <p className="text-slate-600 font-semibold text-xs">Bấm chọn quân cờ bên phải rồi bấm vào các <b>chấm xanh lá</b> trên bàn cờ!</p>
+                                        </div>
+                                        <div className="flex gap-1.5">
+                                            {MOVE_RULES.map((m, i) => (
+                                                <button
+                                                    key={m.type}
+                                                    onClick={() => selectMoveRule(i)}
+                                                    className={`px-2 py-1 rounded-xl border-2 flex flex-col items-center transition-all ${
+                                                        moveIdx === i
+                                                            ? 'bg-amber-400 border-amber-700 scale-105 shadow'
+                                                            : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+                                                    }`}
+                                                >
+                                                    <div className="w-7 h-7"><ChessPiece type={m.type} color="b" /></div>
+                                                    <span className="text-[11px] font-extrabold text-slate-800">{m.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mt-3 items-center">
+                                        <div className="lg:col-span-6 flex flex-col items-center">
+                                            <div className="chess-board-grid">
+                                                {Array.from({ length: 64 }).map((_, idx) => {
+                                                    const r = Math.floor(idx / 8);
+                                                    const c = idx % 8;
+                                                    const isLight = (r + c) % 2 === 0;
+                                                    const isCurrent = movePos[0] === r && movePos[1] === c;
+                                                    const validMoves = getValidDemoMoves(MOVE_RULES[moveIdx].type, movePos[0], movePos[1]);
+                                                    const mv = validMoves.find(m => m.r === r && m.c === c);
+                                                    const sIdx = stars.findIndex(s => s.r === r && s.c === c);
+
+                                                    return (
+                                                        <div
+                                                            key={idx}
+                                                            onClick={() => {
+                                                                if (!mv) { SoundFX.error(); return; }
+                                                                if (MOVE_RULES[moveIdx].type === 'P' && mv.capOnly && starChallenge && sIdx === -1) {
+                                                                    SoundFX.error();
+                                                                    setStarMsg('⚠️ Tốt chỉ ăn chéo khi có ngôi sao thôi nhé!');
+                                                                    return;
+                                                                }
+                                                                setMovePos([r, c]);
+                                                                const nextSteps = stepCount + 1;
+                                                                setStepCount(nextSteps);
+                                                                if (sIdx !== -1) {
+                                                                    const nextStars = stars.filter((_, k) => k !== sIdx);
+                                                                    setStars(nextStars);
+                                                                    SoundFX.capture();
+                                                                    if (nextStars.length === 0 && starChallenge) {
+                                                                        SoundFX.unlock();
+                                                                        setStarChallenge(false);
+                                                                        setStarMsg(`🎉 Tuyệt vời! Thu thập hết sao trong ${nextSteps} bước!`);
+                                                                    } else {
+                                                                        setStarMsg(`⭐ Còn lại ${nextStars.length} ngôi sao nữa!`);
+                                                                    }
+                                                                } else {
+                                                                    SoundFX.move();
+                                                                }
+                                                            }}
+                                                            className={`flex items-center justify-center relative cursor-pointer ${
+                                                                isLight ? 'sq-light' : 'sq-dark'
+                                                            } ${isCurrent ? 'sq-selected' : ''} ${
+                                                                !isCurrent && mv ? (mv.capOnly ? 'sq-capture-hint' : 'sq-hint') : ''
+                                                            }`}
+                                                        >
+                                                            {c === 0 && <span className={`absolute top-0.5 left-1 text-[10px] font-extrabold ${isLight ? 'text-[#9a3412]' : 'text-[#fef3c7]'}`}>{8 - r}</span>}
+                                                            {r === 7 && <span className={`absolute bottom-0.5 right-1 text-[10px] font-extrabold ${isLight ? 'text-[#9a3412]' : 'text-[#fef3c7]'}`}>{files[c]}</span>}
+                                                            {sIdx !== -1 && <span className="text-2xl sm:text-3xl z-10 animate-bounce">⭐</span>}
+                                                            {isCurrent && (
+                                                                <div className="piece-svg-wrap z-10">
+                                                                    <ChessPiece type={MOVE_RULES[moveIdx].type} color="w" />
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            <div className="flex items-center justify-between w-full max-w-[440px] mt-2 text-xs font-bold">
+                                                <div className="flex items-center gap-3 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                                                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-600 inline-block"></span> Ô đi được</span>
+                                                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm border-2 border-red-600 bg-red-200 inline-block"></span> Ô ăn chéo</span>
+                                                </div>
+                                                <button onClick={() => selectMoveRule(moveIdx)} className="text-[#9a3412] underline font-extrabold">↺ Đặt lại vị trí</button>
+                                            </div>
+                                        </div>
+
+                                        <div className="lg:col-span-6 space-y-3">
+                                            <div className="bg-amber-50 rounded-2xl p-4 border-2 border-amber-300">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-14 h-14 bg-white p-1.5 rounded-2xl shadow border-2 border-amber-300 shrink-0">
+                                                        <ChessPiece type={MOVE_RULES[moveIdx].type} color="b" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <h3 className="text-lg font-extrabold text-[#7c2d12]">{MOVE_RULES[moveIdx].name} ({MOVE_RULES[moveIdx].points})</h3>
+                                                            <span className="bg-amber-400 text-amber-950 text-xs font-extrabold px-2 py-0.5 rounded-full">{MOVE_RULES[moveIdx].badge}</span>
+                                                        </div>
+                                                        <p className="text-sm font-extrabold text-emerald-700 mt-1">{MOVE_RULES[moveIdx].mantra}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="mt-3 bg-white rounded-xl p-3 border border-amber-200 space-y-1 text-xs sm:text-sm font-semibold text-slate-700">
+                                                    <div>{MOVE_RULES[moveIdx].detail}</div>
+                                                    <div className="text-amber-800 font-bold">{MOVE_RULES[moveIdx].special}</div>
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-emerald-50 rounded-2xl p-4 border-2 border-emerald-300">
+                                                <div className="flex items-center justify-between gap-2 mb-2">
+                                                    <h4 className="text-base font-extrabold text-emerald-950">⭐ Mini-game: Thu Thập Ngôi Sao</h4>
+                                                    <button onClick={startStars} className="btn-3d bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-3 py-1.5 rounded-xl border-2 border-emerald-800 text-xs">
+                                                        🚀 Rải Sao Mới
+                                                    </button>
+                                                </div>
+                                                <p className="text-slate-700 font-semibold text-xs mb-2">Điều khiển quân cờ ăn hết toàn bộ <b>Ngôi Sao ⭐</b> với số bước ít nhất!</p>
+                                                <div className="flex items-center justify-between bg-white rounded-xl p-2.5 border border-emerald-200 font-extrabold text-xs">
+                                                    <span className="text-emerald-800">{starMsg}</span>
+                                                    <span className="bg-amber-100 text-amber-900 px-2.5 py-1 rounded-lg shrink-0">Bước: {stepCount}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                            )}
+
+                            {/* --------------------------------------------- */}
+                            {/* TAB 2: ĐIỂM & CÁI CÂN CÔNG LÝ                 */}
+                            {/* --------------------------------------------- */}
+                            {activeTab === 'heroes' && (
+                                <section className="space-y-3 bounce-in">
+                                    <div className="bg-white/95 rounded-3xl p-4 shadow-xl border-4 border-amber-400">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h2 className="text-lg sm:text-xl font-extrabold text-[#7c2d12]">🦸‍♂️ Bảng Điểm Giá Trị Các Quân Cờ</h2>
+                                            <span className="text-xs font-bold text-amber-900 bg-amber-100 px-3 py-0.5 rounded-full">Bấm từng quân để xem quy đổi</span>
+                                        </div>
+                                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                                            {HERO_DATA.map((h, i) => (
+                                                <div
+                                                    key={h.id}
+                                                    onClick={() => { SoundFX.click(); setHeroIdx(i); }}
+                                                    className={`cursor-pointer rounded-2xl p-2 border-2 ${h.color} flex flex-col items-center transition-transform hover:scale-105 shadow-sm`}
+                                                >
+                                                    <div className="w-11 h-11 mb-1"><ChessPiece type={h.id} color="w" /></div>
+                                                    <div className="font-extrabold text-sm">{h.name}</div>
+                                                    <div className="bg-white px-2 py-0.5 rounded-full font-black text-xs border border-slate-200">{h.points}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="mt-2.5 bg-amber-50 rounded-2xl p-2.5 border-2 border-amber-200 flex flex-col sm:flex-row items-center justify-between gap-2">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-11 h-11 bg-white p-1 rounded-xl border border-amber-300 shrink-0">
+                                                    <ChessPiece type={HERO_DATA[heroIdx].id} color="b" />
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-sm sm:text-base font-extrabold text-[#7c2d12]">{HERO_DATA[heroIdx].title}</h3>
+                                                    <p className="text-slate-700 font-semibold text-xs">{HERO_DATA[heroIdx].desc}</p>
+                                                </div>
+                                            </div>
+                                            <div className="bg-white px-3 py-1 rounded-xl border-2 border-amber-300 text-center shrink-0">
+                                                <div className="text-[10px] font-bold text-slate-400 uppercase">Quy đổi</div>
+                                                <div className="text-xs sm:text-sm font-extrabold text-amber-700">{HERO_DATA[heroIdx].eq}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="bg-white/95 rounded-3xl p-4 shadow-xl border-4 border-emerald-400">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h2 className="text-base sm:text-lg font-extrabold text-slate-800">⚖️ Cái Cân Công Lý: Kiểm Tra Kèo Đổi Quân</h2>
+                                            <button onClick={() => { SoundFX.click(); setLeftPan([]); setRightPan([]); }} className="btn-3d bg-rose-500 text-white font-bold px-3 py-1 rounded-xl border-2 border-rose-700 text-xs">
+                                                🔄 Xóa Bàn Cân
+                                            </button>
+                                        </div>
+
+                                        <div className={`text-center py-1.5 px-3 rounded-xl border-2 mb-2.5 font-extrabold text-xs sm:text-sm ${
+                                            panDiff > 0 ? 'bg-emerald-100 border-emerald-400 text-emerald-900' :
+                                            panDiff < 0 ? 'bg-rose-100 border-rose-400 text-rose-900' :
+                                            'bg-amber-100 border-amber-300 text-amber-900'
+                                        }`}>
+                                            {panDiff > 0 && `🤑 TUYỆT VỜI! Đổi quân LỜI +${panDiff} ĐIỂM (${leftSum}đ so với ${rightSum}đ)`}
+                                            {panDiff < 0 && `😭 CẨN THẬN! Đổi quân LỖ ${panDiff} ĐIỂM (${leftSum}đ so với ${rightSum}đ)`}
+                                            {panDiff === 0 && `🤝 ĐỔI QUÂN HÒA ĐIỂM (${leftSum} điểm = ${rightSum} điểm)`}
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            <div className="bg-emerald-50 rounded-2xl p-2.5 border-2 border-emerald-400">
+                                                <div className="flex justify-between items-center mb-1.5">
+                                                    <span className="font-extrabold text-xs text-emerald-900">🟢 QUÂN TA ĂN ĐƯỢC</span>
+                                                    <span className="bg-emerald-600 text-white font-extrabold px-2 py-0.5 rounded-full text-xs">{leftSum} điểm</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1 mb-1.5">
+                                                    {['P','N','B','R','Q'].map(t => (
+                                                        <button key={t} onClick={() => { SoundFX.capture(); if (leftPan.length < 8) setLeftPan([...leftPan, t]); }}
+                                                            className="bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg px-2 py-0.5 font-bold text-xs flex items-center gap-1">
+                                                            <span className="w-4 h-4 inline-block"><ChessPiece type={t} color="b" /></span> +{PIECE_VALUES[t]}đ
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <div className="min-h-[48px] bg-white rounded-xl p-1.5 border-2 border-dashed border-emerald-300 flex flex-wrap gap-1 items-center justify-center">
+                                                    {leftPan.length === 0 ? <span className="text-slate-400 text-xs">Bấm chọn quân phía trên...</span> :
+                                                        leftPan.map((t, i) => (
+                                                            <button key={i} onClick={() => { SoundFX.click(); setLeftPan(leftPan.filter((_, k) => k !== i)); }}
+                                                                className="w-8 h-8 bg-emerald-100 hover:bg-rose-100 p-0.5 rounded-lg border border-emerald-300">
+                                                                <ChessPiece type={t} color="b" />
+                                                            </button>
+                                                        ))
+                                                    }
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-rose-50 rounded-2xl p-2.5 border-2 border-rose-400">
+                                                <div className="flex justify-between items-center mb-1.5">
+                                                    <span className="font-extrabold text-xs text-rose-900">🔴 QUÂN TA BỊ MẤT</span>
+                                                    <span className="bg-rose-600 text-white font-extrabold px-2 py-0.5 rounded-full text-xs">{rightSum} điểm</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1 mb-1.5">
+                                                    {['P','N','B','R','Q'].map(t => (
+                                                        <button key={t} onClick={() => { SoundFX.capture(); if (rightPan.length < 8) setRightPan([...rightPan, t]); }}
+                                                            className="bg-white hover:bg-rose-100 border border-rose-300 rounded-lg px-2 py-0.5 font-bold text-xs flex items-center gap-1">
+                                                            <span className="w-4 h-4 inline-block"><ChessPiece type={t} color="w" /></span> +{PIECE_VALUES[t]}đ
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <div className="min-h-[48px] bg-white rounded-xl p-1.5 border-2 border-dashed border-rose-300 flex flex-wrap gap-1 items-center justify-center">
+                                                    {rightPan.length === 0 ? <span className="text-slate-400 text-xs">Bấm chọn quân phía trên...</span> :
+                                                        rightPan.map((t, i) => (
+                                                            <button key={i} onClick={() => { SoundFX.click(); setRightPan(rightPan.filter((_, k) => k !== i)); }}
+                                                                className="w-8 h-8 bg-rose-100 hover:bg-slate-200 p-0.5 rounded-lg border border-rose-300">
+                                                                <ChessPiece type={t} color="w" />
+                                                            </button>
+                                                        ))
+                                                    }
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="mt-2.5 flex flex-col items-center">
+                                            <div
+                                                className="w-full max-w-xs h-2.5 bg-[#7c2d12] rounded-full balance-beam flex items-center justify-between px-2"
+                                                style={{ transform: `rotate(${Math.max(-14, Math.min(14, -panDiff * 2))}deg)` }}
+                                            >
+                                                <div className="w-4 h-4 rounded-full bg-emerald-500 border-2 border-white shadow" />
+                                                <div className="w-4 h-4 rounded-full bg-rose-500 border-2 border-white shadow" />
+                                            </div>
+                                            <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-b-[16px] border-b-slate-700" />
+                                        </div>
+                                    </div>
+                                </section>
+                            )}
+
+                            {/* --------------------------------------------- */}
+                            {/* TAB 3: THỬ THÁCH ĐỔI QUÂN & TRANH BÍ ẨN 6x4   */}
+                            {/* --------------------------------------------- */}
+                            {activeTab === 'puzzles' && (
+                                <section className="bg-white/95 rounded-3xl p-3 sm:p-3.5 shadow-xl border-4 border-amber-400 bounce-in">
+                                    {/* Thanh tiêu đề trung lập (không lộ tên bài gợi ý) & Chọn tranh bí ẩn */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b-2 border-amber-100">
+                                        <div className="flex items-center gap-2">
+                                            <span className={`px-2.5 py-1 rounded-xl text-xs font-extrabold flex items-center gap-1.5 ${
+                                                currentPuzzle.turn === 'w'
+                                                    ? 'bg-amber-100 text-amber-950 border-2 border-amber-400'
+                                                    : 'bg-slate-800 text-white border-2 border-slate-900'
+                                            }`}>
+                                                <span>{currentPuzzle.turn === 'w' ? '⚪ Lượt Trắng đi' : '⚫ Lượt Đen đi'}</span>
+                                            </span>
+                                            <h2 className="text-sm sm:text-lg font-extrabold text-[#7c2d12]">
+                                                Bài tập số {currentPuzzle.id} / 23
+                                            </h2>
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            <button
+                                                onClick={() => { SoundFX.click(); setArtKey('knightCup'); }}
+                                                className={`px-2.5 py-1 rounded-xl text-xs font-extrabold border-2 ${
+                                                    artKey === 'knightCup' ? 'bg-amber-400 text-amber-950 border-amber-700' : 'bg-amber-50 text-slate-700 border-amber-200'
+                                                }`}
+                                            >
+                                                🐴 Tranh 1: Kỵ Sĩ & Cúp
+                                            </button>
+                                            <button
+                                                onClick={() => { SoundFX.click(); setArtKey('crownCastle'); }}
+                                                className={`px-2.5 py-1 rounded-xl text-xs font-extrabold border-2 ${
+                                                    artKey === 'crownCastle' ? 'bg-amber-400 text-amber-950 border-amber-700' : 'bg-amber-50 text-slate-700 border-amber-200'
+                                                }`}
+                                            >
+                                                🏰 Tranh 2: Lâu Đài
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    SoundFX.click();
+                                                    setUnlockedTiles(Array(23).fill(false));
+                                                    setJustUnlocked(-1);
+                                                    loadPuzzle(0);
+                                                }}
+                                                className="px-2.5 py-1 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300"
+                                            >
+                                                🔄 Chơi lại
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 mt-2 items-center">
+                                        {/* Bàn cờ chuẩn Staunton bên trái */}
+                                        <div className="lg:col-span-6 flex flex-col items-center">
+                                            {/* 23 nút chọn bài tập bố trí gọn gàng (8 nút/hàng) */}
+                                            <div className="grid grid-cols-8 gap-1 mb-1.5 w-full max-w-[440px]">
+                                                {PUZZLES.map((p, idx) => {
+                                                    const done = unlockedTiles[idx];
+                                                    const cur = idx === puzzleIdx;
+                                                    return (
+                                                        <button
+                                                            key={p.id}
+                                                            onClick={() => loadPuzzle(idx)}
+                                                            className={`h-6 rounded-md font-extrabold text-[11px] border transition-all ${
+                                                                cur ? 'bg-[#7c2d12] text-white border-amber-400 scale-105 shadow font-black' :
+                                                                done ? 'bg-emerald-500 text-white border-emerald-700' :
+                                                                'bg-amber-50 text-slate-700 border-amber-300 hover:bg-amber-100'
+                                                            }`}
+                                                        >
+                                                            {done && !cur ? '✓' : idx + 1}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            <div className="relative">
+                                                <div className="chess-board-grid">
+                                                    {Array.from({ length: 64 }).map((_, idx) => {
+                                                        const r = Math.floor(idx / 8);
+                                                        const c = idx % 8;
+                                                        const isLight = (r + c) % 2 === 0;
+                                                        const key = `${r},${c}`;
+                                                        const code = boardState[key];
+                                                        const isSel = selectedSq && selectedSq[0] === r && selectedSq[1] === c;
+                                                        const isLast = lastMoveSq.includes(key);
+
+                                                        return (
+                                                            <div
+                                                                key={idx}
+                                                                onClick={() => onPuzzleSquareClick(r, c)}
+                                                                className={`flex items-center justify-center relative cursor-pointer ${
+                                                                    isLight ? 'sq-light' : 'sq-dark'
+                                                                } ${isSel ? 'sq-selected' : ''} ${isLast ? 'sq-last-move' : ''}`}
+                                                            >
+                                                                {c === 0 && (
+                                                                    <span className={`absolute top-0.5 left-1 text-[10px] font-extrabold ${isLight ? 'text-[#9a3412]' : 'text-[#fef3c7]'}`}>
+                                                                        {8 - r}
+                                                                    </span>
+                                                                )}
+                                                                {r === 7 && (
+                                                                    <span className={`absolute bottom-0.5 right-1 text-[10px] font-extrabold ${isLight ? 'text-[#9a3412]' : 'text-[#fef3c7]'}`}>
+                                                                        {files[c]}
+                                                                    </span>
+                                                                )}
+                                                                {code && (
+                                                                    <div className="piece-svg-wrap z-10">
+                                                                        <ChessPiece type={code[1]} color={code[0]} />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                                <BoardArrow arrow={arrow} />
+                                            </div>
+
+                                            <div className="flex items-center justify-between w-full max-w-[440px] mt-1.5 text-xs font-bold px-1">
+                                                <span className="text-slate-600">Bấm quân đi rồi bấm ô muốn ăn!</span>
+                                                <div className="flex items-center gap-3">
+                                                    <button
+                                                        onClick={() => {
+                                                            SoundFX.click();
+                                                            setArrow({ fromR: currentPuzzle.from[0], fromC: currentPuzzle.from[1], toR: currentPuzzle.to[0], toC: currentPuzzle.to[1], color: '#eab308' });
+                                                        }}
+                                                        className="text-amber-700 hover:text-amber-900 font-extrabold"
+                                                    >
+                                                        💡 Gợi ý mũi tên
+                                                    </button>
+                                                    <button onClick={() => loadPuzzle(puzzleIdx)} className="text-[#9a3412] underline">
+                                                        ↺ Xếp lại
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Cột phải: Đề bài trung lập + Lưới Tranh Màu Bí Ẩn 6x4 (23 bài + 1 ô thưởng) */}
+                                        <div className="lg:col-span-6 space-y-2.5">
+                                            <div className="bg-amber-50 rounded-2xl p-3 border-2 border-amber-300">
+                                                <div className="flex items-center justify-between gap-2 mb-1">
+                                                    <span className="bg-[#7c2d12] text-amber-100 font-extrabold px-2.5 py-0.5 rounded-lg text-xs">
+                                                        Thế cờ {puzzleIdx + 1} / 23
+                                                    </span>
+                                                    <div className="flex items-center gap-2 bg-white px-2 py-0.5 rounded-lg border border-amber-200 text-[11px] font-extrabold">
+                                                        <span className="flex items-center gap-0.5"><span className="w-3.5 h-3.5 inline-block"><ChessPiece type="P" color="b" /></span>1</span>
+                                                        <span className="flex items-center gap-0.5"><span className="w-3.5 h-3.5 inline-block"><ChessPiece type="N" color="b" /></span>3</span>
+                                                        <span className="flex items-center gap-0.5"><span className="w-3.5 h-3.5 inline-block"><ChessPiece type="B" color="b" /></span>3</span>
+                                                        <span className="flex items-center gap-0.5"><span className="w-3.5 h-3.5 inline-block"><ChessPiece type="R" color="b" /></span>5</span>
+                                                        <span className="flex items-center gap-0.5"><span className="w-3.5 h-3.5 inline-block"><ChessPiece type="Q" color="b" /></span>9</span>
+                                                    </div>
+                                                </div>
+                                                <p className="text-slate-800 font-bold text-xs sm:text-sm leading-snug">{NEUTRAL_PROMPT}</p>
+                                            </div>
+
+                                            {feedback && (
+                                                <div className={`rounded-2xl p-2.5 border-2 ${feedback.ok ? 'bg-emerald-50 border-emerald-400 bounce-in' : 'bg-rose-50 border-rose-400 shake'}`}>
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div>
+                                                            <h4 className={`text-sm font-extrabold ${feedback.ok ? 'text-emerald-800' : 'text-rose-800'}`}>
+                                                                {feedback.ok ? '🎨 ' : '🤔 '}{feedback.heading}
+                                                            </h4>
+                                                            <div className={`text-xs sm:text-sm font-black ${feedback.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                                                ➡️ {feedback.math}
+                                                            </div>
+                                                        </div>
+                                                        {feedback.ok && (
+                                                            <button
+                                                                onClick={() => {
+                                                                    for (let off = 1; off <= 23; off++) {
+                                                                        const next = (puzzleIdx + off) % 23;
+                                                                        if (!unlockedTiles[next]) { loadPuzzle(next); return; }
+                                                                    }
+                                                                    loadPuzzle((puzzleIdx + 1) % 23);
+                                                                }}
+                                                                className="btn-3d bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-3 py-1.5 rounded-xl border-2 border-emerald-800 text-xs shrink-0"
+                                                            >
+                                                                Tiếp Tục ➡️
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-xs font-semibold text-slate-700 mt-1">{feedback.explanation}</p>
+                                                </div>
+                                            )}
+
+                                            {/* MỞ KHÓA TRANH MÀU BÍ ẨN 6x4 (23 Ô BÀI TẬP + 1 Ô QUÀ TẶNG) */}
+                                            <div className="bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 rounded-2xl p-3 border-2 border-amber-300 flex flex-col sm:flex-row items-center gap-3">
+                                                <div className="w-[240px] h-[160px] sm:w-[264px] sm:h-[176px] shrink-0 grid grid-cols-6 grid-rows-4 gap-1 bg-[#7c2d12] p-1.5 rounded-2xl shadow-lg border-2 border-amber-500">
+                                                    {Array.from({ length: 24 }).map((_, i) => {
+                                                        const r = Math.floor(i / 6);
+                                                        const c = i % 6;
+                                                        const isBonusTile = i === 23;
+                                                        const isOpen = isBonusTile ? unlockedCount > 0 : unlockedTiles[i];
+                                                        const tileColors = [
+                                                            'bg-rose-500', 'bg-emerald-500', 'bg-sky-500', 'bg-amber-500', 'bg-purple-500', 'bg-teal-500',
+                                                            'bg-orange-500', 'bg-indigo-500', 'bg-pink-500', 'bg-cyan-600', 'bg-lime-600', 'bg-fuchsia-500',
+                                                            'bg-red-500', 'bg-blue-500', 'bg-yellow-500', 'bg-violet-500', 'bg-green-600', 'bg-rose-600',
+                                                            'bg-sky-600', 'bg-amber-600', 'bg-emerald-600', 'bg-purple-600', 'bg-orange-600', 'bg-amber-400'
+                                                        ];
+                                                        const tileBg = tileColors[i % tileColors.length];
+
+                                                        return (
+                                                            <div
+                                                                key={i}
+                                                                onClick={() => !isBonusTile && loadPuzzle(i)}
+                                                                className={`mystery-tile relative rounded-md overflow-hidden border ${
+                                                                    isBonusTile ? 'cursor-default' : 'cursor-pointer'
+                                                                } ${
+                                                                    isOpen
+                                                                        ? `border-amber-200 ${justUnlocked === i ? 'unlocked' : ''}`
+                                                                        : `locked border-amber-900/50 ${tileBg}`
+                                                                }`}
+                                                            >
+                                                                {isOpen ? (
+                                                                    <svg viewBox={`${c * 50} ${r * 50} 50 50`} className="w-full h-full block">
+                                                                        {ARTWORKS[artKey].renderSvgContent()}
+                                                                    </svg>
+                                                                ) : (
+                                                                    <div className="w-full h-full flex flex-col items-center justify-center text-white leading-none">
+                                                                        <span className="text-xs font-black drop-shadow">{isBonusTile ? '⭐' : i + 1}</span>
+                                                                        <span className="text-[8px] opacity-85">{isBonusTile ? 'Quà' : '🔒'}</span>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+
+                                                <div className="flex-1 text-center sm:text-left space-y-1.5">
+                                                    <div className="inline-block bg-amber-500 text-amber-950 text-[11px] font-black px-2.5 py-0.5 rounded-full uppercase">
+                                                        Mở Khóa Tranh Màu Bí Ẩn ({unlockedCount}/23)
+                                                    </div>
+                                                    <h4 className="text-base font-extrabold text-[#7c2d12] leading-tight">
+                                                        {ARTWORKS[artKey].name}
+                                                    </h4>
+                                                    <p className="text-xs font-semibold text-slate-600 leading-relaxed">
+                                                        Giải đúng mỗi bài tập đổi quân sẽ lật mở <b>1 mảnh ghép màu sắc</b>. Hoàn thành cả 23 ô để nhận cúp chiến thắng!
+                                                    </p>
+                                                    <div className="bg-white rounded-xl px-3 py-1.5 border border-amber-200 flex items-center justify-between text-xs font-extrabold">
+                                                        <span className="text-slate-600">Tổng điểm lời:</span>
+                                                        <span className="text-emerald-600 text-sm">+{totalProfit} điểm ⭐</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+                            )}
+
+                            {/* --------------------------------------------- */}
+                            {/* TAB 4: ĐẤU TRƯỜNG ĐỘI                         */}
+                            {/* --------------------------------------------- */}
+                            {activeTab === 'arena' && (
+                                <section className="bg-white/95 rounded-3xl p-4 shadow-xl border-4 border-rose-400 bounce-in">
+                                    <div className="text-center mb-3">
+                                        <h2 className="text-xl font-extrabold text-slate-800">🏆 Đấu Trường Tính Điểm Nhanh</h2>
+                                        <p className="text-slate-600 font-semibold text-xs">Hai đội thi nhau tính nhanh trong <b>15 giây</b> xem kèo đổi quân là <b>LỜI</b>, <b>HÒA</b> hay <b>LỖ</b>!</p>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4 max-w-3xl mx-auto mb-3">
+                                        <div className="bg-rose-50 rounded-2xl p-3 border-4 border-rose-400 text-center">
+                                            <h3 className="text-base font-extrabold text-rose-700">🐉 ĐỘI RỒNG ĐỎ</h3>
+                                            <div className="text-4xl font-black text-rose-600 my-1">{redScore}</div>
+                                            <div className="flex justify-center gap-2">
+                                                <button onClick={() => { SoundFX.unlock(); setRedScore(redScore + 1); }} className="btn-3d bg-rose-500 text-white font-bold px-3 py-1 rounded-xl border-2 border-rose-700 text-xs">+1 ⭐</button>
+                                                <button onClick={() => { SoundFX.click(); setRedScore(Math.max(0, redScore - 1)); }} className="bg-white text-rose-700 font-bold px-2 py-1 rounded-xl border border-rose-300 text-xs">-1</button>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-sky-50 rounded-2xl p-3 border-4 border-sky-400 text-center">
+                                            <h3 className="text-base font-extrabold text-sky-700">🦈 ĐỘI CÁ MẬP XANH</h3>
+                                            <div className="text-4xl font-black text-sky-600 my-1">{blueScore}</div>
+                                            <div className="flex justify-center gap-2">
+                                                <button onClick={() => { SoundFX.unlock(); setBlueScore(blueScore + 1); }} className="btn-3d bg-sky-500 text-white font-bold px-3 py-1 rounded-xl border-2 border-sky-700 text-xs">+1 ⭐</button>
+                                                <button onClick={() => { SoundFX.click(); setBlueScore(Math.max(0, blueScore - 1)); }} className="bg-white text-sky-700 font-bold px-2 py-1 rounded-xl border border-sky-300 text-xs">-1</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="max-w-3xl mx-auto bg-amber-50 rounded-2xl p-4 border-4 border-amber-300 text-center">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="bg-amber-200 text-amber-900 font-extrabold px-3 py-0.5 rounded-full text-xs">
+                                                Câu hỏi {arenaIdx + 1} / {ARENA_QUESTIONS.length}
+                                            </span>
+                                            <span className="text-base font-black text-rose-600 bg-white px-2.5 py-0.5 rounded-lg border-2 border-rose-300">
+                                                ⏱️ {timeLeft > 0 ? `${timeLeft}s` : 'HẾT GIỜ!'}
+                                            </span>
+                                        </div>
+
+                                        <div className="flex items-center justify-center gap-4 my-2">
+                                            <div className="flex gap-1 bg-white px-3 py-1.5 rounded-xl border border-amber-300">
+                                                {ARENA_QUESTIONS[arenaIdx].left.map((t, i) => <div key={i} className="w-9 h-9"><ChessPiece type={t} color="w" /></div>)}
+                                            </div>
+                                            <span className="text-2xl font-black text-amber-700">⇄</span>
+                                            <div className="flex gap-1 bg-white px-3 py-1.5 rounded-xl border border-amber-300">
+                                                {ARENA_QUESTIONS[arenaIdx].right.map((t, i) => <div key={i} className="w-9 h-9"><ChessPiece type={t} color="b" /></div>)}
+                                            </div>
+                                        </div>
+                                        <div className="text-xs font-extrabold text-amber-800 mb-1">{ARENA_QUESTIONS[arenaIdx].label}</div>
+                                        <h3 className="text-base sm:text-lg font-extrabold text-slate-800">{ARENA_QUESTIONS[arenaIdx].text}</h3>
+
+                                        <div className="grid grid-cols-3 gap-2.5 mt-3">
+                                            <button onClick={() => {
+                                                setTimerRunning(false);
+                                                const ok = ARENA_QUESTIONS[arenaIdx].answer === 'LOI';
+                                                ok ? SoundFX.unlock() : SoundFX.error();
+                                                setArenaReveal({ ok, text: ARENA_QUESTIONS[arenaIdx].explain });
+                                            }} className="btn-3d bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold py-2 rounded-xl border-2 border-emerald-700 text-sm sm:text-base">🤑 LỜI ĐIỂM</button>
+                                            <button onClick={() => {
+                                                setTimerRunning(false);
+                                                const ok = ARENA_QUESTIONS[arenaIdx].answer === 'HOA';
+                                                ok ? SoundFX.unlock() : SoundFX.error();
+                                                setArenaReveal({ ok, text: ARENA_QUESTIONS[arenaIdx].explain });
+                                            }} className="btn-3d bg-amber-400 hover:bg-amber-500 text-amber-950 font-extrabold py-2 rounded-xl border-2 border-amber-600 text-sm sm:text-base">🤝 HÒA ĐIỂM</button>
+                                            <button onClick={() => {
+                                                setTimerRunning(false);
+                                                const ok = ARENA_QUESTIONS[arenaIdx].answer === 'LO';
+                                                ok ? SoundFX.unlock() : SoundFX.error();
+                                                setArenaReveal({ ok, text: ARENA_QUESTIONS[arenaIdx].explain });
+                                            }} className="btn-3d bg-rose-500 hover:bg-rose-600 text-white font-extrabold py-2 rounded-xl border-2 border-rose-700 text-sm sm:text-base">😭 LỖ ĐIỂM</button>
+                                        </div>
+
+                                        {arenaReveal && (
+                                            <div className={`mt-2.5 rounded-xl p-2.5 border-2 font-extrabold text-xs sm:text-sm ${arenaReveal.ok ? 'bg-emerald-100 border-emerald-500 text-emerald-900' : 'bg-rose-100 border-rose-500 text-rose-900'}`}>
+                                                {arenaReveal.ok ? '✅ CHÍNH XÁC! ' : '❌ CHƯA ĐÚNG RỒI! '}{arenaReveal.text}
+                                            </div>
+                                        )}
+
+                                        <div className="mt-3 flex justify-center gap-3">
+                                            <button onClick={() => { SoundFX.click(); setTimeLeft(15); setTimerRunning(true); }} className="btn-3d bg-indigo-500 text-white font-bold px-4 py-1.5 rounded-xl border-2 border-indigo-700 text-xs">
+                                                ⏱️ Chạy đồng hồ 15s
+                                            </button>
+                                            <button onClick={() => { SoundFX.click(); setArenaIdx((arenaIdx + 1) % ARENA_QUESTIONS.length); setArenaReveal(null); setTimerRunning(false); setTimeLeft(15); }} className="btn-3d bg-slate-700 text-white font-bold px-4 py-1.5 rounded-xl border-2 border-slate-900 text-xs">
+                                                Câu tiếp theo ➡️
+                                            </button>
+                                        </div>
+                                    </div>
+                                </section>
+                            )}
+                        </div>
+                    </main>
+
+                    {/* MODAL CHÚC MỪNG HOÀN THÀNH 100% BỨC TRANH BÍ ẨN */}
+                    {showVictory && (
+                        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
+                            <div className="bg-white rounded-3xl max-w-md w-full p-6 border-4 border-amber-400 shadow-2xl text-center bounce-in">
+                                <div className="inline-block bg-amber-400 text-amber-950 font-black px-4 py-1 rounded-full text-xs uppercase mb-2">
+                                    🎉 Chúc Mừng Siêu Nhí Cờ Vua! 🎉
+                                </div>
+                                <h2 className="text-2xl font-extrabold text-[#7c2d12]">Mở Khóa Tranh Thành Công!</h2>
+                                <p className="text-slate-600 font-bold text-xs mt-1">Con đã giải đúng cả 23 thế cờ đổi quân có lợi thế!</p>
+
+                                <div className="w-60 h-40 mx-auto my-4 rounded-2xl overflow-hidden shadow-xl border-4 border-amber-400">
+                                    <svg viewBox="0 0 300 200" className="w-full h-full block">
+                                        {ARTWORKS[artKey].renderSvgContent()}
+                                    </svg>
+                                </div>
+
+                                <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-2.5 mb-4">
+                                    <div className="text-[11px] font-bold text-emerald-800 uppercase">Tổng thành tích đạt được</div>
+                                    <div className="text-xl font-black text-emerald-600">+{totalProfit} Điểm Lời ⭐</div>
+                                </div>
+
+                                <div className="flex gap-2 justify-center">
+                                    <button onClick={() => setShowVictory(false)} className="btn-3d bg-slate-200 text-slate-800 font-extrabold px-4 py-2 rounded-xl border-2 border-slate-400 text-xs">
+                                        Xem lại bàn cờ
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setShowVictory(false);
+                                            setArtKey(artKey === 'knightCup' ? 'crownCastle' : 'knightCup');
+                                            setUnlockedTiles(Array(23).fill(false));
+                                            setJustUnlocked(-1);
+                                            loadPuzzle(0);
+                                        }}
+                                        className="btn-3d bg-emerald-600 text-white font-extrabold px-4 py-2 rounded-xl border-2 border-emerald-800 text-xs"
+                                    >
+                                        🎨 Đổi Tranh Mới & Chơi Lại
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
